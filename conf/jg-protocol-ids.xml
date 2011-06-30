@@ -62,5 +62,9 @@
     <class id="204" name="org.jgroups.blocks.mux.MuxRequestCorrelator"/>
 
     <!-- User-defined protocols should use IDs >= 1000 -->
+    <class id="1000" name="org.jgroups.protocols.pmcast.GROUP_MULTICAST"/>
+    <class id="1001" name="org.jgroups.protocols.pmcast.GROUP_MULTICAST2"/>
+    <class id="1002" name="org.jgroups.protocols.pmcast.GROUP_MULTICAST3"/>
+    <class id="1003" name="org.jgroups.protocols.pmcast.GROUP_MULTICAST4"/>
 
 </protocol-ids>

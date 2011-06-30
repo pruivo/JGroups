@@ -37,6 +37,11 @@ public class SingletonAddress implements Address {
         return false;
     }
 
+    @Override
+    public boolean isGroupAddress() {
+        return false;
+    }
+
     public int size() {
         return 0;
     }

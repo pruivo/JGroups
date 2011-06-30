@@ -307,6 +307,11 @@ public class UUID implements Address, Streamable, Comparable<Address> {
         return false;
     }
 
+    @Override
+    public boolean isGroupAddress() {
+        return false;
+    }
+
     public int size() {
         int retval=SIZE;
         if(additional_data != null)

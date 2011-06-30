@@ -11,3 +11,4 @@ atlassian*
 keystore/
 tmp/
 bla*.java
+target/

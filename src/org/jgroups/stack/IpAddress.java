@@ -98,6 +98,11 @@ public class IpAddress implements PhysicalAddress {
         return ip_addr != null && ip_addr.isMulticastAddress();
     }
 
+    @Override
+    public boolean isGroupAddress() {
+        return false;
+    }
+
     /**
      * Returns the additional_data.
      * @return byte[]

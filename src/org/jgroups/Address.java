@@ -26,6 +26,9 @@ public interface Address extends Externalizable, Streamable, Comparable<Address>
      */
     boolean  isMulticastAddress();
 
+    //TODO javadoc
+    boolean isGroupAddress();
+
     /** Returns serialized size of this address */
     int size();
 }
