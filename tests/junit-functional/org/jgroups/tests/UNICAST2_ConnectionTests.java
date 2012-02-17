@@ -11,6 +11,7 @@ import org.testng.annotations.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CyclicBarrier;
 
 /**
  * Tests unilateral closings of UNICAST2 connections. The test scenarios are described in doc/design.UNICAST.new.txt.
@@ -31,16 +32,17 @@ public class UNICAST2_ConnectionTests {
         r1=new MyReceiver("A");
         r2=new MyReceiver("B");
         a=new JChannel(props);
+        a.setName("A");
         a.connect(CLUSTER);
         a_addr=a.getAddress();
         a.setReceiver(r1);
         u1=(UNICAST2)a.getProtocolStack().findProtocol(UNICAST2.class);
         b=new JChannel(props);
+        b.setName("B");
         b.connect(CLUSTER);
         b_addr=b.getAddress();
         b.setReceiver(r2);
         u2=(UNICAST2)b.getProtocolStack().findProtocol(UNICAST2.class);
-        System.out.println("A=" + a_addr + ", B=" + b_addr);
     }
 
 
@@ -118,10 +120,70 @@ public class UNICAST2_ConnectionTests {
         Drop drop=new Drop(true);
         a.getProtocolStack().insertProtocol(drop, ProtocolStack.BELOW, UNICAST2.class);
 
+
+        u1.setLevel("trace");
+        u2.setLevel("trace");
+
         // then send messages from A to B
-        sendAndCheck(a, b_addr, 10, r2);
+        System.out.println("===================== sending 5 messages from A to B");
+        sendAndCheck(a, b_addr, 5, r2);
+        System.out.println("===================== sending 5 messages from A to B: done");
+
+
     }
 
+
+    /** Tests concurrent reception of multiple messages with a different conn_id (https://issues.jboss.org/browse/JGRP-1347) */
+    public void testMultipleConcurrentResets() throws Exception {
+        sendAndCheck(a, b_addr, 1, r2);
+
+        // now close connection on A unilaterally
+        System.out.println("==== Closing the connection on A");
+        u1.removeConnection(b_addr);
+
+        r2.clear();
+
+        final UNICAST2 unicast=(UNICAST2)b.getProtocolStack().findProtocol(UNICAST2.class);
+
+        int NUM=10;
+
+        final List<Message> msgs=new ArrayList<Message>(NUM);
+
+        for(int i=1; i <= NUM; i++) {
+            Message msg=new Message(b_addr, a_addr, "m" + i);
+            UNICAST2.Unicast2Header hdr=UNICAST2.Unicast2Header.createDataHeader(1, (short)2, true);
+            msg.putHeader(unicast.getId(), hdr);
+            msgs.add(msg);
+        }
+
+
+        Thread[] threads=new Thread[NUM];
+        final CyclicBarrier barrier=new CyclicBarrier(NUM+1);
+        for(int i=0; i < NUM; i++) {
+            final int index=i;
+            threads[i]=new Thread() {
+                public void run() {
+                    try {
+                        barrier.await();
+                        unicast.up(new Event(Event.MSG, msgs.get(index)));
+                    }
+                    catch(Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+            };
+            threads[i].start();
+        }
+
+        barrier.await();
+        for(Thread thread: threads)
+            thread.join();
+
+        List<Message> list=r2.getMessages();
+        System.out.println("list = " + print(list));
+
+        assert list.size() == 1 : "list must have 1 element but has " + list.size() + ": " + print(list);
+    }
 
 
     /**
@@ -131,8 +193,8 @@ public class UNICAST2_ConnectionTests {
      */
     private void sendToEachOtherAndCheck(int num) throws Exception {
         for(int i=1; i <= num; i++) {
-            a.send(b_addr, null, "m" + i);
-            b.send(a_addr, null, "m" + i);
+            a.send(b_addr, "m" + i);
+            b.send(a_addr, "m" + i);
         }
         List<Message> l1=r1.getMessages();
         List<Message> l2=r2.getMessages();
@@ -147,16 +209,23 @@ public class UNICAST2_ConnectionTests {
         assert l2.size() == num;
     }
 
-    private static void sendAndCheck(JChannel channel, Address dest, int num, MyReceiver receiver) throws Exception {
+    private void sendAndCheck(JChannel channel, Address dest, int num, MyReceiver receiver) throws Exception {
         receiver.clear();
-        for(int i=1; i <= num; i++)
-            channel.send(dest, null, "m" + i);
+        for(int i=1; i <= num; i++) {
+//            if(i == 2) {
+//                u1.sendStableMessages();
+//                u2.sendStableMessages();
+//            }
+            channel.send(dest, "m" + i);
+        }
         List<Message> list=receiver.getMessages();
         for(int i=0; i < 10; i++) {
             if(list.size() == num)
                 break;
             Util.sleep(500);
         }
+        u1.setLevel("warn");
+        u2.setLevel("warn");
         System.out.println("list = " + print(list));
         int size=list.size();
         assert size == num : "list has " + size + " elements";

@@ -10,8 +10,6 @@ import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
-import java.util.LinkedList;
-import java.util.List;
 import java.util.Collection;
 import java.util.concurrent.*;
 
@@ -24,8 +22,8 @@ public class TransportThreadPoolTest extends ChannelTestBase {
 
     @BeforeMethod
     protected void setUp() throws Exception {
-        c1=createChannel(true, 2);
-        c2=createChannel(c1);
+        c1=createChannel(true, 2, "A");
+        c2=createChannel(c1, "B");
     }
 
     @AfterMethod
@@ -43,7 +41,7 @@ public class TransportThreadPoolTest extends ChannelTestBase {
         c1.connect("TransportThreadPoolTest");
         c2.connect("TransportThreadPoolTest");
         
-        Util.blockUntilViewsReceived(5000, 500, c1, c2);
+        Util.waitUntilAllChannelsHaveSameSize(10000, 1000, c1, c2);
         assert c2.getView().size() == 2 : "view is " + c2.getView() + ", but should have had a size of 2";
         
         TP transport=c1.getProtocolStack().getTransport();
@@ -54,10 +52,10 @@ public class TransportThreadPoolTest extends ChannelTestBase {
         thread_pool=Executors.newFixedThreadPool(2);
         transport.setDefaultThreadPool(thread_pool);
         
-        c1.send(null, null, "hello world");
-        c2.send(null, null, "bela");
-        c1.send(null, null, "message 3");
-        c2.send(null, null, "message 4");
+        c1.send(null, "hello world");
+        c2.send(null, "bela");
+        c1.send(null, "message 3");
+        c2.send(null, "message 4");
 
         long start=System.currentTimeMillis();
         

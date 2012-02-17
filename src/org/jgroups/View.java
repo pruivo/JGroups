@@ -6,45 +6,38 @@ import org.jgroups.util.Streamable;
 import org.jgroups.util.Util;
 
 import java.io.*;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Vector;
-import java.util.Collection;
-
+import java.util.*;
 
 /**
- * A view is a local representation of the current membership of a group.
- * Only one view is installed in a channel at a time.
- * Views contain the address of its creator, an ID and a list of member addresses.
- * These addresses are ordered, and the first address is always the coordinator of the view.
- * This way, each member of the group knows who the new coordinator will be if the current one
- * crashes or leaves the group.
- * The views are sent between members using the VIEW_CHANGE event
+ * A view is a local representation of the current membership of a group. Only one view is installed
+ * in a channel at a time. Views contain the address of its creator, an ID and a list of member
+ * addresses. These addresses are ordered, and the first address is always the coordinator of the
+ * view. This way, each member of the group knows who the new coordinator will be if the current one
+ * crashes or leaves the group. The views are sent between members using the VIEW_CHANGE event
+ * 
+ * @since 2.0
  * @author Bela Ban
  */
-public class View implements Externalizable, Cloneable, Streamable {
-    /* A view is uniquely identified by its ViewID
-     * The view id contains the creator address and a Lamport time.
-     * The Lamport time is the highest timestamp seen or sent from a view.
-     * if a view change comes in with a lower Lamport time, the event is discarded.
-     */
-    protected ViewId vid=null;
+public class View implements Comparable<View>, Streamable, Iterable<Address> {
 
-    /**
-     * A list containing all the members of the view
-     * This list is always ordered, with the coordinator being the first member.
-     * the second member will be the new coordinator if the current one disappears
-     * or leaves the group.
-     */
-    protected Vector<Address> members=null;
+   /**
+    * A view is uniquely identified by its ViewID. The view id contains the creator address and a
+    * Lamport time. The Lamport time is the highest timestamp seen or sent from a view. if a view
+    * change comes in with a lower Lamport time, the event is discarded.
+    */
+    protected ViewId vid;
 
-    @Deprecated
-    protected Map<String, Object> payload=null;
-    private static final long serialVersionUID=7027860705519930293L;
+   /**
+    * A list containing all the members of the view.This list is always ordered, with the
+    * coordinator being the first member. the second member will be the new coordinator if the
+    * current one disappears or leaves the group.
+    */
+    protected List<Address> members;
+
 
 
     /**
-     * creates an empty view, should not be used
+     * Creates an empty view, should not be used, only used by (de-)serialization
      */
     public View() {
     }
@@ -56,14 +49,9 @@ public class View implements Externalizable, Cloneable, Streamable {
      * @param vid     The view id of this view (can not be null)
      * @param members Contains a list of all the members in the view, can be empty but not null.
      */
-    public View(ViewId vid, Vector<Address> members) {
+    public View(ViewId vid, List<Address> members) {
         this.vid=vid;
-        this.members=members;
-    }
-
-    public View(ViewId vid, Collection<Address> members) {
-        this.vid=vid;
-        this.members=new Vector<Address>(members);
+        this.members=new ArrayList<Address>(members);
     }
 
     /**
@@ -73,31 +61,28 @@ public class View implements Externalizable, Cloneable, Streamable {
      * @param id      The lamport timestamp of this view
      * @param members Contains a list of all the members in the view, can be empty but not null.
      */
-    public View(Address creator, long id, Collection<Address> members) {
+    public View(Address creator, long id, List<Address> members) {
         this(new ViewId(creator, id), members);
     }
 
 
     /**
-     * returns the view ID of this view
+     * Returns the view ID of this view
      * if this view was created with the empty constructur, null will be returned
      *
      * @return the view ID of this view
      */
-    public ViewId getVid() {
-        return vid;
-    }
-
+    public ViewId getVid()    {return vid;}
     public ViewId getViewId() {return vid;}
 
     /**
-     * returns the creator of this view
+     * Returns the creator of this view
      * if this view was created with the empty constructur, null will be returned
      *
      * @return the creator of this view in form of an Address object
      */
     public Address getCreator() {
-        return vid != null ? vid.getCoordAddress() : null;
+        return vid.getCreator();
     }
 
     /**
@@ -107,220 +92,78 @@ public class View implements Externalizable, Cloneable, Streamable {
      *
      * @return a reference to the ordered list of members in this view
      */
-    public Vector<Address> getMembers() {
-        return Util.unmodifiableVector(members);
+    public List<Address> getMembers() {
+        return Collections.unmodifiableList(members);
     }
 
     /**
-     * returns true, if this view contains a certain member
+     * Returns true, if this view contains a certain member
      *
      * @param mbr - the address of the member,
      * @return true if this view contains the member, false if it doesn't
      *         if the argument mbr is null, this operation returns false
      */
     public boolean containsMember(Address mbr) {
-        return !(mbr == null || members == null) && members.contains(mbr);
+        return mbr != null && members.contains(mbr);
     }
 
 
+    public int compareTo(View o) {
+        return vid.compareTo(o.vid);
+    }
+
     public boolean equals(Object obj) {
-        if(!(obj instanceof View))
-            return false;
-        if(vid != null) {
-            int rc=vid.compareTo(((View)obj).vid);
-            if(rc != 0)
-                return false;
-            if(members != null && ((View)obj).members != null) {
-                return members.equals(((View)obj).members);
-            }
-        }
-        else {
-            if(((View)obj).vid == null)
-                return true;
-        }
-        return false;
+        return obj instanceof View && (this == obj || compareTo((View)obj) == 0);
     }
 
 
     public int hashCode() {
-        return vid != null? vid.hashCode() : 0;
+        return vid.hashCode();
     }
 
     /**
-     * returns the number of members in this view
+     * Returns the number of members in this view
      *
      * @return the number of members in this view 0..n
      */
     public int size() {
-        return members == null ? 0 : members.size();
+        return members.size();
     }
 
 
     public View copy() {
-        ViewId vid2=vid != null ? (ViewId)vid.clone() : null;
-        Vector<Address> members2=members != null ? new Vector<Address>(members) : null;
-        return new View(vid2, members2);
+        return new View(vid.copy(), members);
     }
 
-
-    /**
-     * creates a copy of this view
-     * @return a copy of this view
-     */
-    public Object clone() {
-        ViewId vid2=vid != null ? (ViewId)vid.clone() : null;
-        Vector<Address> members2=members != null ? new Vector<Address>(members) : null;
-        return new View(vid2, members2);
-    }
-
-
-    /**
-     * debug only
-     */
-    public String printDetails() {
-        StringBuilder ret=new StringBuilder();
-        ret.append(vid).append("\n\t");
-        if(members != null) {
-            for(int i=0; i < members.size(); i++) {
-                ret.append(members.elementAt(i)).append("\n\t");
-            }
-            ret.append('\n');
-        }
-        return ret.toString();
-    }
-
-    /**
-     * Adds a key and value to the view. Since the payloads will be shipped around *with* the view, so the keys and
-     * values need to be serializable. Note that the total serialized size of <em>all</em> keys and values cannot
-     * exceed 65000 bytes !
-     * @param key
-     * @param value
-     * @deprecated Will be removed in 3.0
-     */
-    public void addPayload(String key, Object value) {
-        if(payload == null) {
-            payload=new HashMap<String, Object>(7);
-        }
-        payload.put(key, value);
-    }
-
-    /**
-     *
-     * @param key
-     * @return
-     * @deprecated Will be removed in 3.0
-     */
-    public Object removePayload(String key) {
-        return payload != null? payload.remove(key) : null;
-    }
-
-    /**
-     *
-     * @param key
-     * @return
-     * @deprecated Will be removed in 3.0
-     */
-    public Object getPayload(String key) {
-        if(payload != null)
-            return payload.get(key);
-        return null;
-    }
 
 
     public String toString() {
-        StringBuilder ret=new StringBuilder(64);
-        ret.append(vid).append(" ").append(members);
-        return ret.toString();
+        StringBuilder sb=new StringBuilder(64);
+        sb.append(vid).append(" ");
+        sb.append("[").append(Util.printListWithDelimiter(members, ", ", Util.MAX_LIST_PRINT_SIZE)).append("]");
+        return sb.toString();
     }
 
 
-    public void writeExternal(ObjectOutput out) throws IOException {
-        out.writeObject(vid);
-        out.writeObject(members);
-        if(payload != null && !payload.isEmpty()) {
-            out.writeBoolean(true);
-            out.writeObject(payload);
-        }
-        else {
-            out.writeBoolean(false);
-        }
-    }
 
-    @SuppressWarnings("unchecked")
-    public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
-        vid=(ViewId)in.readObject();
-        members=(Vector<Address>)in.readObject();
-        if(in.readBoolean()) {
-            payload=(Map<String, Object>)in.readObject();
-        }
-    }
-
-
-    public void writeTo(DataOutputStream out) throws IOException {
-        // vid
-        if(vid != null) {
-            out.writeBoolean(true);
-            vid.writeTo(out);
-        }
-        else
-            out.writeBoolean(false);
-
-        // members:
+    public void writeTo(DataOutput out) throws Exception {
+        vid.writeTo(out);
         Util.writeAddresses(members, out);
-
-        if(payload != null && !payload.isEmpty()) {
-            try {
-                byte buffer[]=Util.objectToByteBuffer(payload);
-                out.writeShort(buffer.length);
-                out.write(buffer, 0, buffer.length);
-            }
-            catch(Exception e) {
-                throw new IOException("could not write View payload");
-            }
-        }
-        else {
-            out.writeShort(0);
-        }
     }
 
     @SuppressWarnings("unchecked") 
-    public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
-        boolean b;
-        // vid:
-        b=in.readBoolean();
-        if(b) {
-            vid=new ViewId();
-            vid.readFrom(in);
-        }
-
-        // members:
-        members=(Vector<Address>)Util.readAddresses(in, Vector.class);
-
-        short payloadLength=in.readShort();
-        if(payloadLength > 0) {
-            byte[] buffer=new byte[payloadLength];
-            in.readFully(buffer);
-            try {
-                payload=(Map<String, Object>)Util.objectFromByteBuffer(buffer);
-            }
-            catch(Exception e) {
-                throw new IOException("Could not read View payload " + buffer.length);
-            }
-        }
+    public void readFrom(DataInput in) throws Exception {
+        vid=new ViewId();
+        vid.readFrom(in);
+        members=(List<Address>)Util.readAddresses(in, ArrayList.class);
     }
 
     public int serializedSize() {
-        int retval=Global.BYTE_SIZE; // presence for vid
-        if(vid != null)
-            retval+=vid.serializedSize();
-        retval+=Util.size(members);
-
-        retval+=Global.SHORT_SIZE; // presence for payload
-        if(payload != null) {
-            retval+=Util.sizeOf(payload);
-        }
-        return retval;
+        return (int)(vid.serializedSize() + Util.size(members));
     }
 
 
+    public Iterator<Address> iterator() {
+        return members.iterator();
+    }
 }

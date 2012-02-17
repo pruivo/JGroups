@@ -6,9 +6,8 @@ import org.jgroups.util.ThreadFactory;
 import org.jgroups.annotations.*;
 import org.jgroups.stack.Protocol;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
+import java.io.DataInput;
+import java.io.DataOutput;
 import java.util.*;
 import java.util.Queue;
 import java.util.concurrent.*;
@@ -20,7 +19,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * @author Bela Ban
  * @since 2.10
  */
-@Experimental
 @MBean(description="Implementation of scopes (concurrent delivery of messages from the same sender)")
 public class SCOPE extends Protocol {
 
@@ -319,7 +317,7 @@ public class SCOPE extends Protocol {
     }
 
     private void handleView(View view) {
-        Vector<Address> members=view.getMembers();
+        List<Address> members=view.getMembers();
 
         // Remove all non members from receiver_table
         Set<Address> keys=new HashSet<Address>(queues.keySet());
@@ -502,7 +500,7 @@ public class SCOPE extends Protocol {
             }
         }
 
-        public void writeTo(DataOutputStream out) throws IOException {
+        public void writeTo(DataOutput out) throws Exception {
             out.writeByte(type);
             switch(type) {
                 case MSG:
@@ -514,7 +512,7 @@ public class SCOPE extends Protocol {
             }
         }
 
-        public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
+        public void readFrom(DataInput in) throws Exception {
             type=in.readByte();
             switch(type) {
                 case MSG:

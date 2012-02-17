@@ -19,15 +19,15 @@ public class PingPong extends ReceiverAdapter {
     static final byte PING = 1;
     static final byte PONG = 2;
 
-    static final byte[] PING_REQ=new byte[]{PING};
-    static final byte[] PONG_RSP=new byte[]{PONG};
+    static final byte[] PING_REQ={PING};
+    static final byte[] PONG_RSP={PONG};
 
     long start=0;
 
     final List<Address> members=new ArrayList<Address>();
 
 
-    public void start(String props, String name, boolean unicast) throws ChannelException {
+    public void start(String props, String name, boolean unicast) throws Exception {
         ch=new JChannel(props);
         if(name != null)
             ch.setName(name);
@@ -41,7 +41,7 @@ public class PingPong extends ReceiverAdapter {
                 dest=(Address)Util.pickRandomElement(members);
             
             Message msg=new Message(dest, null, PING_REQ);
-            msg.setFlag((byte)(Message.DONT_BUNDLE | Message.NO_FC));
+            msg.setFlag(Message.DONT_BUNDLE, Message.NO_FC);
             start=System.nanoTime();
             ch.send(msg);
         }
@@ -58,7 +58,7 @@ public class PingPong extends ReceiverAdapter {
         switch(type) {
             case PING:
                 final Message rsp=new Message(msg.getSrc(), null, PONG_RSP);
-                rsp.setFlag((byte)(Message.DONT_BUNDLE | Message.NO_FC));
+                rsp.setFlag(Message.DONT_BUNDLE, Message.NO_FC);
                 try {
                     ch.send(rsp);
                 }
@@ -76,7 +76,7 @@ public class PingPong extends ReceiverAdapter {
 
 
 
-    public static void main(String[] args) throws ChannelException {
+    public static void main(String[] args) throws Exception {
         String props="udp.xml";
         String name=null;
         boolean unicast=false;

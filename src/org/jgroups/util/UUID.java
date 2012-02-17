@@ -9,35 +9,34 @@ import java.security.SecureRandom;
 import java.util.Collection;
 import java.util.Map;
 
-/** Logical address which is unique over space and time.
- * <br/>
+/**
+ * Logical address which is unique over space and time. <br/>
  * Copied from java.util.UUID, but unneeded fields from the latter have been removed. UUIDs needs to
  * have a small memory footprint.
+ *
  * @author Bela Ban
  */
-public class UUID implements Address, Streamable, Comparable<Address> {
+public class UUID implements Address {
+    private static final long serialVersionUID = 8610088016866299124L;
     protected long   mostSigBits;
     protected long   leastSigBits;
-    protected byte[] additional_data;
 
     /** The random number generator used by this class to create random based UUIDs */
     protected static volatile SecureRandom numberGenerator=null;
 
     /** Keeps track of associations between logical addresses (UUIDs) and logical names */
-    protected static LazyRemovalCache<Address,String> cache;
-
-    private static final long serialVersionUID=3972962439975931228L;
+    protected static final LazyRemovalCache<Address,String> cache;
 
     protected static boolean print_uuids=false;
 
-    protected static final int SIZE=Global.LONG_SIZE * 2 + Global.BYTE_SIZE;
+    protected static final int SIZE=Global.LONG_SIZE * 2;
 
     protected static final LazyRemovalCache.Printable<Address,String> print_function=new LazyRemovalCache.Printable<Address,String>() {
         public java.lang.String print(Address key, String val) {
             return val + ": " + (key instanceof UUID? ((UUID)key).toStringLong() : key) + "\n";
         }
     };
-    
+
 
     static {
         String tmp;
@@ -134,26 +133,6 @@ public class UUID implements Address, Streamable, Comparable<Address> {
         return cache.printCache(print_function);
     }
 
-    /**
-     * Returns the additional_data.
-     * @return byte[]
-     * @since 2.8
-     * @deprecated Will be removed in 3.0. This was only added to be backwards compatible with 2.7
-     */
-    public final byte[] getAdditionalData() {
-        return additional_data;
-    }
-
-    /**
-     * Sets the additional_data.
-     * @param additional_data The additional_data to set
-     * @since 2.8
-     * @deprecated Will be removed in 3.0. This was only added to be backwards compatible with 2.7
-     */
-    public final void setAdditionalData(byte[] additional_data) {
-        this.additional_data=additional_data;
-    }
-
 
     /**
      * Static factory to retrieve a type 4 (pseudo randomly generated) UUID.
@@ -194,7 +173,7 @@ public class UUID implements Address, Streamable, Comparable<Address> {
         return val != null? val : toStringLong();
     }
 
-     /**
+    /**
      * Returns a {@code String} object representing this {@code UUID}.
      *
      * <p> The UUID string representation is as described by this BNF:
@@ -279,53 +258,14 @@ public class UUID implements Address, Streamable, Comparable<Address> {
 
 
 
-    public void writeTo(DataOutputStream out) throws IOException {
+    public void writeTo(DataOutput out) throws Exception {
         out.writeLong(leastSigBits);
         out.writeLong(mostSigBits);
-        if(additional_data != null) {
-            out.writeBoolean(true); // 1 byte
-            out.writeShort(additional_data.length);
-            out.write(additional_data, 0, additional_data.length);
-        }
-        else
-            out.writeBoolean(false);
     }
 
-    public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
+    public void readFrom(DataInput in) throws Exception {
         leastSigBits=in.readLong();
         mostSigBits=in.readLong();
-        if(in.readBoolean() == false)
-            return;
-        int len=in.readUnsignedShort();
-        if(len > 0) {
-            additional_data=new byte[len];
-            in.readFully(additional_data, 0, additional_data.length);
-        }
-    }
-
-    public boolean isMulticastAddress() {
-        return false;
-    }
-
-    @Override
-    public boolean isGroupAddress() {
-        return false;
-    }
-
-    public int size() {
-        int retval=SIZE;
-        if(additional_data != null)
-            retval+=additional_data.length + Global.SHORT_SIZE;
-        return retval;
-    }
-
-    public Object clone() throws CloneNotSupportedException {
-        UUID ret=new UUID(mostSigBits, leastSigBits);
-        if(additional_data != null) {
-            ret.additional_data=new byte[additional_data.length];
-            System.arraycopy(additional_data, 0, ret.additional_data, 0, additional_data.length);
-        }
-        return ret;
     }
 
     public void writeExternal(ObjectOutput out) throws IOException {
@@ -333,10 +273,18 @@ public class UUID implements Address, Streamable, Comparable<Address> {
         out.writeLong(mostSigBits);
     }
 
-
     public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
         leastSigBits=in.readLong();
         mostSigBits=in.readLong();
+    }
+
+
+    public int size() {
+        return SIZE;
+    }
+
+    public UUID copy() {
+        return new UUID(mostSigBits, leastSigBits);
     }
 
 

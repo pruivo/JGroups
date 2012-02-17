@@ -1,9 +1,9 @@
 package org.jgroups;
 
-
-
 /**
- * Used for inter-stack and intra-stack communication.
+ * Event is a JGroups internal class used for inter-stack and intra-stack communication. 
+ * 
+ * @since 2.0
  * @author Bela Ban
  */
 public class Event {
@@ -15,14 +15,13 @@ public class Event {
     public static final int SUSPECT                            =  9;  // arg = Address of suspected member
     public static final int BLOCK                              = 10;  // arg = null (used by FLUSH)
     public static final int FIND_INITIAL_MBRS                  = 12;  // arg = JoinPromise (or null (merge2))
-    public static final int FIND_ALL_MBRS                      = 13;  // arg = JoinPromise (or null (merge2))
+    public static final int FIND_ALL_VIEWS                     = 13;  // arg = JoinPromise (or null (merge2))
     public static final int MERGE                              = 14;  // arg = Map<Address,View>
     public static final int TMP_VIEW                           = 15;  // arg = View
     public static final int BECOME_SERVER                      = 16;  // sent when client has joined group
     public static final int GET_APPLSTATE                      = 17;  // get state from appl (arg=StateTransferInfo)
     public static final int GET_STATE                          = 19;  // arg = StateTransferInfo
     public static final int GET_STATE_OK                       = 20;  // arg = StateTransferInfo
-    public static final int STATE_RECEIVED                     = 21;  // arg = StateTransferInfo (with state and state_id)
     public static final int STABLE                             = 30;  // arg = long[] (stable seqnos for mbrs)
     public static final int GET_DIGEST                         = 39;  //
     public static final int SET_DIGEST                         = 41;  // arg = Digest
@@ -34,11 +33,10 @@ public class Event {
     public static final int RESUME_STABLE                      = 66;  // arg = null
     public static final int SUSPEND					           = 68;  // arg = List<Address> (used by FLUSH)
     public static final int RESUME					           = 70;  // arg = null (used by FLUSH)
-    public static final int STATE_TRANSFER_INPUTSTREAM         = 71;  // arg=java.io.InputStream subclass
-    public static final int STATE_TRANSFER_OUTPUTSTREAM        = 72;  // arg=java.io.OutputStream subclass
-    public static final int STATE_TRANSFER_INPUTSTREAM_CLOSED  = 73;  //arg=null
-    public static final int STATE_TRANSFER_OUTPUTSTREAM_CLOSED = 74;  //arg=null
-    public static final int UNBLOCK                            = 75;  //arg=null (indicate end of flush round)
+    public static final int STATE_TRANSFER_INPUTSTREAM         = 71;  // arg = InputStream
+    public static final int STATE_TRANSFER_OUTPUTSTREAM        = 72;  // arg = OutputStream
+    public static final int STATE_TRANSFER_INPUTSTREAM_CLOSED  = 73;  // arg = StateTransferResult
+    public static final int UNBLOCK                            = 75;  // arg = null (indicate end of flush round)
     public static final int CLOSE_BARRIER                      = 76;  // arg = null
     public static final int OPEN_BARRIER                       = 77;  // arg = null
     public static final int REBROADCAST				           = 78;  // arg = Digest
@@ -57,6 +55,7 @@ public class Event {
     public static final int UNLOCK_ALL                         = 97; // arg=null
     public static final int LOCK_AWAIT                         = 98; // arg=LockInfo
     public static final int LOCK_SIGNAL                        = 99; // arg=AwaitInfo
+    public static final int IS_MERGE_IN_PROGRESS               = 100; // returns true or false
 
 
     public static final int USER_DEFINED                       = 1000; // arg = <user def., e.g. evt type + data>
@@ -80,23 +79,9 @@ public class Event {
         return type;
     }
 
-    /**
-     * Sets the new type
-     * @param type
-     * @deprecated in order to make an Event immutable
-     */
-    @Deprecated
-    public void setType(int type) {
-        throw new IllegalAccessError("setType() has been deprecated, to make Events immutable");
-    }
 
     public Object getArg() {
         return arg;
-    }
-
-    @Deprecated
-    public void setArg(Object arg) {
-        throw new IllegalAccessError("setArg() has been deprecated, to make Events immutable");
     }
 
 
@@ -111,13 +96,12 @@ public class Event {
             case SUSPECT:                return "SUSPECT";
             case BLOCK:	                 return "BLOCK";
             case FIND_INITIAL_MBRS:	     return "FIND_INITIAL_MBRS";
-            case FIND_ALL_MBRS:          return "FIND_ALL_INITIAL_VIEWS";
+            case FIND_ALL_VIEWS:         return "FIND_ALL_VIEWS";
             case TMP_VIEW:	             return "TMP_VIEW";
             case BECOME_SERVER:	         return "BECOME_SERVER";
             case GET_APPLSTATE:          return "GET_APPLSTATE";
             case GET_STATE:              return "GET_STATE";
             case GET_STATE_OK:           return "GET_STATE_OK";
-            case STATE_RECEIVED:         return "STATE_RECEIVED";
             case STABLE:                 return "STABLE";
             case GET_DIGEST:             return "GET_DIGEST";
             case SET_DIGEST:             return "SET_DIGEST";
@@ -134,7 +118,6 @@ public class Event {
             case STATE_TRANSFER_INPUTSTREAM: return "STATE_TRANSFER_INPUTSTREAM";
             case STATE_TRANSFER_OUTPUTSTREAM:return "STATE_TRANSFER_OUTPUTSTREAM";
             case STATE_TRANSFER_INPUTSTREAM_CLOSED: return "STATE_TRANSFER_INPUTSTREAM_CLOSED";
-            case STATE_TRANSFER_OUTPUTSTREAM_CLOSED: return "STATE_TRANSFER_OUTPUTSTREAM_CLOSED";
             case UNBLOCK:                return "UNBLOCK";
             case CLOSE_BARRIER:          return "CLOSE_BARRIER";
             case OPEN_BARRIER:           return "OPEN_BARRIER";
@@ -153,6 +136,7 @@ public class Event {
             case UNLOCK_ALL:             return "UNLOCK_ALL";
             case LOCK_AWAIT:             return "LOCK_AWAIT";
             case LOCK_SIGNAL:            return "LOCK_SIGNAL";
+            case IS_MERGE_IN_PROGRESS:   return "IS_MERGE_IN_PROGRESS";
             
             case USER_DEFINED:           return "USER_DEFINED";
             default:                     return "UNDEFINED(" + t + ")";

@@ -2,12 +2,12 @@ package org.jgroups;
 
 import org.jgroups.conf.ClassConfigurator;
 import org.jgroups.protocols.SCOPE;
-import org.jgroups.util.UUID;
 
 /**
- * Globals used by JGroups packages.
+ * Global is a JGroups internal class defining global variables.
  * 
- * @author Bela Ban Mar 29, 2004
+ * @since 2.0
+ * @author Bela Ban 
  */
 public class Global {
     public static final int BYTE_SIZE   = Byte.SIZE    / 8; // 1
@@ -17,8 +17,9 @@ public class Global {
     public static final int DOUBLE_SIZE = Double.SIZE  / 8; // 8;
     public static final int FLOAT_SIZE  = Float.SIZE   / 8; // 4;
 
+    public static final int MAX_DATAGRAM_PACKET_SIZE=1 << 16;
+
     public static final Object NULL=new Object();
-    public static final Address NULL_ADDR=new UUID();
 
     public static final short SCOPE_ID=ClassConfigurator.getProtocolId(SCOPE.class);
 
@@ -29,10 +30,9 @@ public class Global {
 
 
     public static final String BIND_ADDR="jgroups.bind_addr";
-    public static final String BIND_ADDR_OLD="bind.address";
+    public static final String EXTERNAL_ADDR="jgroups.external_addr";
     public static final String BIND_INTERFACE="jgroups.bind_interface";
     public static final String IGNORE_BIND_ADDRESS_PROPERTY="jgroups.ignore.bind_addr";
-    public static final String IGNORE_BIND_ADDRESS_PROPERTY_OLD="ignore.bind.address";
 
     public static final String TCPPING_INITIAL_HOSTS="jgroups.tcpping.initial_hosts";
 
@@ -59,11 +59,6 @@ public class Global {
     public static final String IPV6_MCAST_PREFIX="jgroups.ipmcast.prefix";
 
     public static final String TIMER_NUM_THREADS="jgroups.timer.num_threads";
-
-    public static final String MUX_ENABLED="jgroups.mux.enabled";
-    public static final String MUX_MIN_THREADS="jgroups.mux.min_threads";
-    public static final String MUX_MAX_THREADS="jgroups.mux.max_threads";
-    public static final String MUX_KEEPALIVE="jgroups.mux.keepalive_time";
 
     public static final String USE_JDK_LOGGER="jgroups.use.jdk_logger"; // forces use of the JDK logger
     public static final String CUSTOM_LOG_FACTORY="jgroups.logging.log_factory_class";
@@ -94,29 +89,14 @@ public class Global {
     public static final String INITIAL_MCAST_PORT="INITIAL_MCAST_PORT";
     public static final String INITIAL_TCP_PORT="INITIAL_TCP_PORT";
 
-    public static final String UDP_MCAST_SOCK="jgroups.udp.mcast_sock";
-    public static final String UDP_UCAST_SOCK="jgroups.udp.unicast_sock";
-    public static final String TCP_SRV_SOCK="jgroups.tcp.srv_sock";
-    public static final String TUNNEL_UCAST_SOCK="jgroups.tunnel.ucast_sock";
-    public static final String MPING_MCAST_SOCK="jgroups.mping.mcast_sock";
-    public static final String BPING_SOCK="jgroups.bping.sock";
-    public static final String TP_DIAG_MCAST_SOCK="jgroups.tp.diag.mcast_sock";
-    public static final String STREAMING_STATE_TRANSFER_SERVER_SOCK="jgroups.streaming_state_transfer.srv_sock";
-    public static final String FD_SOCK_SRV_SOCK="jgroups.fd_sock.srv_sock";
-    public static final String BSH_SRV_SOCK="jgroups.bsh.srv_sock";
-    public static final String STOMP_SRV_SOCK="jgroups.stomp.srv_sock";
-
     public static final String CCHM_INITIAL_CAPACITY="cchm.initial_capacity";
     public static final String CCHM_LOAD_FACTOR="cchm.load_factor";
     public static final String CCHM_CONCURRENCY_LEVEL="cchm.concurrency_level";
+    public static final String MAX_LIST_PRINT_SIZE="max.list.print_size";
 
     public static final int IPV4_SIZE=4;
     public static final int IPV6_SIZE=16;
 
-
-    public static final int SMALL_CLUSTER_SIZE=10;
-    public static final int NORMAL_CLUSTER_SIZE=20;
-    public static final int BIG_CLUSTER_SIZE=100;
 
 
 

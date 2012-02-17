@@ -207,7 +207,7 @@ public class GROUP_MULTICAST4 extends Protocol {
                 Message msg=(Message)evt.getArg();
                 Address addr = msg.getDest();
 
-                if(addr != null && addr.isGroupAddress()) {
+                if(addr != null && addr instanceof GroupAddress) {
                     //it is a group multicast message
                     Set<Address> destination = ((GroupAddress)addr).getAddresses();
                     boolean loopback = true; //messages without total order *must* be send to myself

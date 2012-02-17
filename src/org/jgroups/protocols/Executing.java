@@ -1,10 +1,9 @@
 package org.jgroups.protocols;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
+import java.io.DataInput;
+import java.io.DataOutput;
 import java.io.Externalizable;
 import java.io.IOException;
-import java.io.InterruptedIOException;
 import java.io.NotSerializableException;
 import java.io.Serializable;
 import java.nio.ByteBuffer;
@@ -29,7 +28,7 @@ import java.util.concurrent.FutureTask;
 import java.util.concurrent.RunnableFuture;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -70,6 +69,21 @@ abstract public class Executing extends Protocol {
      */
     protected final Queue<Runnable> _awaitingConsumer = 
         new ConcurrentLinkedQueue<Runnable>();
+    
+    /**
+     * This is a map on the client side showing for all of the current pending
+     * requests
+     */
+    protected final ConcurrentMap<Runnable, Long> _requestId = 
+        new ConcurrentHashMap<Runnable, Long>();
+    
+    /**
+     * This is essentially a set on the consumer side of id's of all the threads 
+     * currently running as consumers.  This is basically a set, but since
+     * there is no ConcurrentHashSet we use a phoney value
+     */
+    protected final ConcurrentMap<Long, Object> _consumerId = 
+        new ConcurrentHashMap<Long, Object>();
 
     protected final ConcurrentMap<Future<?>, ExecutorNotification> notifiers = 
         new ConcurrentHashMap<Future<?>, ExecutorNotification>();
@@ -112,15 +126,15 @@ abstract public class Executing extends Protocol {
      * addresses that currently want to run something.  If this queue has
      * elements the consumer queue must be empty.
      */
-    protected Queue<Address> _runRequests = new ArrayDeque<Address>();
+    protected Queue<Owner> _runRequests = new ArrayDeque<Owner>();
     
     /**
      * This is stored on the coordinator side.  This queue holds all of the
      * addresses that currently are able to run something.  If this queue has
      * elements the run request queue must be empty.
      */
-    protected Queue<Address> _consumersAvailable = new ArrayDeque<Address>();
-
+    protected Queue<Owner> _consumersAvailable = new ArrayDeque<Owner>();
+    
     protected static enum Type {
         RUN_REQUEST,            // request to coordinator from client to tell of a new task request
         CONSUMER_READY,         // request to coordinator from server to tell of a new consumer ready
@@ -173,21 +187,32 @@ abstract public class Executing extends Protocol {
             case ExecutorEvent.TASK_SUBMIT:
                 Runnable runnable = (Runnable)evt.getArg();
                 _awaitingConsumer.add(runnable);
-                sendToCoordinator(Type.RUN_REQUEST, local_addr);
+                // We are limited to a number of concurrent request id's
+                // equal to 2^63-1.  This is quite large and if it 
+                // overflows it will still be positive
+                long requestId = Math.abs(counter.getAndIncrement());
+                _requestId.put(runnable, requestId);
+                sendToCoordinator(Type.RUN_REQUEST, requestId, local_addr);
                 break;
             case ExecutorEvent.CONSUMER_READY:
-                sendToCoordinator(Type.CONSUMER_READY, local_addr);
+                Thread currentThread = Thread.currentThread();
+                long id = currentThread.getId();
+                _consumerId.put(id, new Object());
+                sendToCoordinator(Type.CONSUMER_READY, id, local_addr);
                 try {
                     // Unfortunately we can't start taking before we send
                     // a message, therefore we have to do a timed poll on
                     // _tasks below to make sure that we have time to call take
                     runnable = _tasks.take();
-                    _runnableThreads.put(runnable, Thread.currentThread());
+                    _runnableThreads.put(runnable, currentThread);
                     return runnable;
                 }
                 catch (InterruptedException e) {
-                    sendToCoordinator(Type.CONSUMER_UNREADY, local_addr);
+                    sendToCoordinator(Type.CONSUMER_UNREADY, id, local_addr);
                     Thread.currentThread().interrupt();
+                }
+                finally {
+                    _consumerId.remove(id);
                 }
                 break;
             case ExecutorEvent.TASK_COMPLETE:
@@ -207,17 +232,13 @@ abstract public class Executing extends Protocol {
 
                 Object value = null;
                 boolean exception = false;
-                // If the owner is gone that means it was interrupted, so we
-                // can't send back to them now
-                boolean runnableInterrupted = owner == null;
-                
                 if (throwable != null) {
-                    if (!runnableInterrupted || 
-                            throwable instanceof InterruptedException ||
-                            throwable instanceof InterruptedIOException) {
-                        // If the task interrupt wasn't present we treat this
-                        // as a shutdown of the task.
-                        Thread.currentThread().interrupt();
+                    // InterruptedException is special telling us that
+                    // we interrupted the thread while waiting but still got
+                    // a task therefore we have to reject it.
+                    if (throwable instanceof InterruptedException) {
+                        sendRequest(owner.address, Type.RUN_REJECTED, owner.requestId, null);
+                        break;
                     }
                     value = throwable;
                     exception = true;
@@ -250,25 +271,48 @@ abstract public class Executing extends Protocol {
                 }
                 
                 if (owner != null) {
+                    final Type type;
+                    final Object valueToSend;
                     if (value == null) {
-                        sendRequest(owner.getAddress(), Type.RESULT_SUCCESS, 
-                                    owner.requestId, value);
+                        type = Type.RESULT_SUCCESS;
+                        valueToSend = value;
                     }
                     // Both serializable values and exceptions would go in here
                     else if (value instanceof Serializable || 
                             value instanceof Externalizable || 
                             value instanceof Streamable) {
-                        sendRequest(owner.getAddress(), 
-                            exception ? Type.RESULT_EXCEPTION : Type.RESULT_SUCCESS, 
-                                    owner.requestId, value);
+                        type = exception ? Type.RESULT_EXCEPTION : Type.RESULT_SUCCESS;
+                        valueToSend = value;
                     }
                     // This would happen if the value wasn't serializable,
                     // so we have to send back to the client that the class
                     // wasn't serializable
                     else {
-                        sendRequest(owner.getAddress(), Type.RESULT_EXCEPTION,
-                            owner.requestId, new NotSerializableException(value
-                                .getClass().getName()));
+                        type = Type.RESULT_EXCEPTION;
+                        valueToSend = new NotSerializableException(
+                            value.getClass().getName());
+                    }
+                    
+                    if (local_addr.equals(owner.getAddress())) {
+                        if(log.isTraceEnabled())
+                            log.trace("[redirect] <--> [" + local_addr + "] "
+                                    + type.name() + " [" + value
+                                    + (owner.requestId != -1 ? " request id: " + 
+                                            owner.requestId : "")
+                                    + "]");
+                        final Owner finalOwner = owner;
+                        if (type == Type.RESULT_SUCCESS) {
+                            handleValueResponse(local_addr, 
+                                finalOwner.requestId, valueToSend);
+                        }
+                        else if (type == Type.RESULT_EXCEPTION){
+                            handleExceptionResponse(local_addr, 
+                                finalOwner.requestId, (Throwable)valueToSend);
+                        }
+                    }
+                    else {
+                        sendRequest(owner.getAddress(), type, owner.requestId, 
+                            valueToSend);
                     }
                 }
                 else {
@@ -282,6 +326,7 @@ abstract public class Executing extends Protocol {
                 runnable = (Runnable)array[0];
                 
                 if (_awaitingConsumer.remove(runnable)) {
+                    _requestId.remove(runnable);
                     if (log.isTraceEnabled())
                         log.trace("Cancelled task " + runnable + " before it was picked up");
                     return Boolean.TRUE;
@@ -290,8 +335,17 @@ abstract public class Executing extends Protocol {
                 else if (array[1] == Boolean.TRUE) {
                     owner = removeKeyForValue(_awaitingReturn, runnable);
                     if (owner != null) {
-                        sendRequest(owner.getAddress(), Type.INTERRUPT_RUN, 
-                            owner.getRequestId(), null);
+                        Long requestIdValue = _requestId.remove(runnable);
+                        // We only cancel if the requestId is still available
+                        // this means the result hasn't been returned yet and
+                        // we still have a chance to interrupt
+                        if (requestIdValue != null) {
+                            if (requestIdValue != owner.getRequestId()) {
+                                log.warn("Cancelling requestId didn't match waiting");
+                            }
+                            sendRequest(owner.getAddress(), Type.INTERRUPT_RUN, 
+                                owner.getRequestId(), null);
+                        }
                     }
                     else {
                         if (log.isTraceEnabled())
@@ -323,6 +377,10 @@ abstract public class Executing extends Protocol {
                         synchronized (_awaitingReturn) {
                             owner = removeKeyForValue(_awaitingReturn, cancelRunnable);
                             if (owner != null) {
+                                Long requestIdValue = _requestId.remove(cancelRunnable);
+                                if (requestIdValue != owner.getRequestId()) {
+                                    log.warn("Cancelling requestId didn't match waiting");
+                                }
                                 sendRequest(owner.getAddress(), Type.INTERRUPT_RUN, 
                                     owner.getRequestId(), null);
                             }
@@ -334,6 +392,7 @@ abstract public class Executing extends Protocol {
                         }
                     }
                     else {
+                        _requestId.remove(cancelRunnable);
                         notRan.add(cancelRunnable);
                     }
                 }
@@ -349,7 +408,7 @@ abstract public class Executing extends Protocol {
         return down_prot.down(evt);
     }
     
-    private static <V, K> V removeKeyForValue(Map<V, K> map, K value) {
+    protected static <V, K> V removeKeyForValue(Map<V, K> map, K value) {
         synchronized (map) {
             Iterator<Entry<V, K>> iter = 
                 map.entrySet().iterator();
@@ -378,18 +437,16 @@ abstract public class Executing extends Protocol {
                     log.trace("[" + local_addr + "] <-- [" + msg.getSrc() + "] " + req);
                 switch(req.type) {
                     case RUN_REQUEST:
-                        handleTaskRequest((Address)req.object);
+                        handleTaskRequest(req.request, (Address)req.object);
                         break;
                     case CONSUMER_READY:
-                        handleConsumerReadyRequest((Address)req.object);
+                        handleConsumerReadyRequest(req.request, (Address)req.object);
                         break;
                     case CONSUMER_UNREADY:
-                        Address consumer = (Address)req.object;
-                        _consumersAvailable.remove(consumer);
-                        sendRemoveConsumerRequest(consumer);
+                        handleConsumerUnreadyRequest(req.request, (Address)req.object);
                         break;
                     case CONSUMER_FOUND:
-                        handleConsumerFoundResponse((Address)req.object);
+                        handleConsumerFoundResponse(req.request, (Address)req.object);
                         break;
                     case RUN_SUBMITTED:
                         Object objectToRun = req.object;
@@ -412,28 +469,35 @@ abstract public class Executing extends Protocol {
                             req.request);
                         break;
                     case RUN_REJECTED:
+                        // We could make requests local for this, but is it really worth it
                         handleTaskRejectedResponse(msg.getSrc(), req.request);
                         break;
                     case RESULT_SUCCESS:
-                        handleValueResponse(msg.getSrc(), req);
+                        handleValueResponse(msg.getSrc(), req.request, req.object);
                         break;
                     case RESULT_EXCEPTION:
-                        handleExceptionResponse(msg.getSrc(), req);
+                        handleExceptionResponse(msg.getSrc(), req.request, 
+                            (Throwable)req.object);
                         break;
                     case INTERRUPT_RUN:
+                        // We could make requests local for this, but is it really worth it
                         handleInterruptRequest(msg.getSrc(), req.request);
                         break;
                     case CREATE_CONSUMER_READY:
-                        handleNewConsumer((Address)req.object);
+                        Owner owner = new Owner((Address)req.object, req.request);
+                        handleNewConsumer(owner);
                         break;
                     case CREATE_RUN_REQUEST:
-                        handleNewRunRequest((Address)req.object);
+                        owner = new Owner((Address)req.object, req.request);
+                        handleNewRunRequest(owner);
                         break;
                     case DELETE_CONSUMER_READY:
-                        handleRemoveConsumer((Address)req.object);
+                        owner = new Owner((Address)req.object, req.request);
+                        handleRemoveConsumer(owner);
                         break;
                     case DELETE_RUN_REQUEST:
-                        handleRemoveRunRequest((Address)req.object);
+                        owner = new Owner((Address)req.object, req.request);
+                        handleRemoveRunRequest(owner);
                         break;
                     default:
                         log.error("Request of type " + req.type + " not known");
@@ -456,21 +520,23 @@ abstract public class Executing extends Protocol {
         
         _consumerLock.lock();
         try {
-            Iterator<Address> iterator = _consumersAvailable.iterator();
+            // This removes the consumers that were registered that are now gone
+            Iterator<Owner> iterator = _consumersAvailable.iterator();
             while (iterator.hasNext()) {
-                Address address = iterator.next();
-                if (!members.contains(address)) {
+                Owner owner = iterator.next();
+                if (!members.contains(owner.getAddress())) {
                     iterator.remove();
-                    sendRemoveConsumerRequest(address);
+                    sendRemoveConsumerRequest(owner);
                 }
             }
             
+            // This removes the tasks that those requestors are gone
             iterator = _runRequests.iterator();
             while (iterator.hasNext()) {
-                Address address = iterator.next();
-                if (!members.contains(address)) {
+                Owner owner = iterator.next();
+                if (!members.contains(owner.getAddress())) {
                     iterator.remove();
-                    sendRemoveRunRequest(address);
+                    sendRemoveRunRequest(owner);
                 }
             }
             
@@ -478,9 +544,13 @@ abstract public class Executing extends Protocol {
                 // The person currently servicing our request has gone down
                 // without completing so we have to keep our request alive by
                 // sending ours back to the coordinator
-                if (!members.contains(entry.getKey())) {
-                    sendToCoordinator(Type.RUN_REQUEST, local_addr);
-                    _awaitingConsumer.add(entry.getValue());
+                Owner owner = entry.getKey();
+                if (!members.contains(owner.getAddress())) {
+                    sendToCoordinator(Type.RUN_REQUEST, owner.getRequestId(), 
+                        owner.getAddress());
+                    Runnable runnable = entry.getValue();
+                    _requestId.put(runnable, owner.getRequestId());
+                    _awaitingConsumer.add(runnable);
                 }
             }
         }
@@ -489,18 +559,21 @@ abstract public class Executing extends Protocol {
         }
     }
 
-    abstract protected void sendToCoordinator(Type type, Object obj);
-    abstract protected void sendNewRunRequest(Address source);
-    abstract protected void sendRemoveRunRequest(Address source);
-    abstract protected void sendNewConsumerRequest(Address source);
-    abstract protected void sendRemoveConsumerRequest(Address source);
+    abstract protected void sendToCoordinator(Type type, long requestId, Address address);
+    abstract protected void sendNewRunRequest(Owner source);
+    abstract protected void sendRemoveRunRequest(Owner source);
+    abstract protected void sendNewConsumerRequest(Owner source);
+    abstract protected void sendRemoveConsumerRequest(Owner source);
 
-    protected void handleTaskRequest(Address source) {
-        Address consumer;
+    protected void handleTaskRequest(long requestId, Address address) {
+        final Owner consumer;
+        Owner source = new Owner(address, requestId);
         _consumerLock.lock();
         try {
             consumer = _consumersAvailable.poll();
-            if (consumer == null) {
+            // We don't add duplicate run requests - this allows for resubmission
+            // if it is thought the message may have been dropped
+            if (consumer == null && !_runRequests.contains(source)) {
                 _runRequests.add(source);
             }
         }
@@ -509,7 +582,8 @@ abstract public class Executing extends Protocol {
         }
         
         if (consumer != null) {
-            sendRequest(source, Type.CONSUMER_FOUND, (short)-1, consumer);
+            sendRequest(source.getAddress(), Type.CONSUMER_FOUND, 
+                consumer.getRequestId(), consumer.getAddress());
             sendRemoveConsumerRequest(consumer);
         }
         else {
@@ -517,12 +591,15 @@ abstract public class Executing extends Protocol {
         }
     }
 
-    protected void handleConsumerReadyRequest(Address source) {
-        Address requestor;
+    protected void handleConsumerReadyRequest(long requestId, Address address) {
+        Owner requestor;
+        final Owner source = new Owner(address, requestId);
         _consumerLock.lock();
         try {
             requestor = _runRequests.poll();
-            if (requestor == null) {
+            // We don't add duplicate consumers - this allows for resubmission
+            // if it is thought the message may have been dropped
+            if (requestor == null && !_consumersAvailable.contains(source)) {
                 _consumersAvailable.add(source);
             }
         }
@@ -531,42 +608,57 @@ abstract public class Executing extends Protocol {
         }
         
         if (requestor != null) {
-            sendRequest(requestor, Type.CONSUMER_FOUND, (short)-1, source);
+            sendRequest(requestor.getAddress(), Type.CONSUMER_FOUND, 
+                source.getRequestId(), source.getAddress());
             sendRemoveRunRequest(requestor);
         }
         else {
             sendNewConsumerRequest(source);
         }
     }
+    
+    protected void handleConsumerUnreadyRequest(long requestId, Address address) {
+        Owner consumer = new Owner(address, requestId);
+        _consumersAvailable.remove(consumer);
+        sendRemoveConsumerRequest(consumer);
+    }
 
-    protected void handleConsumerFoundResponse(Address consumer) {
-        Runnable runnable = _awaitingConsumer.poll();
+    protected void handleConsumerFoundResponse(long request, Address address) {
+        final Runnable runnable = _awaitingConsumer.poll();
+        // This is a representation of the server side owner running our task.
+        Owner owner = new Owner(address, request);
         if (runnable == null) {
             // For some reason we don't have a runnable anymore
             // so we have to send back to the coordinator that
             // the consumer is still available.  The runnable
             // would be removed on a cancel
-            sendToCoordinator(Type.CONSUMER_READY, consumer);
+            sendToCoordinator(Type.CONSUMER_READY, owner.getRequestId(), 
+                owner.getAddress());
         }
         else {
-            // We are limited to a number of concurrent request id's
-            // equal to 2^15-1.  This is quite large and if it 
-            // overflows it will still be positive
-            short requestId = (short)Math.abs(counter.getAndIncrement());
-            
-            _awaitingReturn.put(new Owner(consumer, requestId), runnable);
-            if (runnable instanceof DistributedFuture) {
-                Callable<?> callable = ((DistributedFuture<?>)runnable).getCallable();
-                sendRequest(consumer, Type.RUN_SUBMITTED, requestId, callable);
+            final Long requestId = _requestId.get(runnable);
+            owner = new Owner(address, requestId);
+            _awaitingReturn.put(owner, runnable);
+            // If local we pass along without serializing
+            if (local_addr.equals(owner.getAddress())) {
+                handleTaskSubmittedRequest(runnable, local_addr, requestId);
             }
             else {
-                sendRequest(consumer, Type.RUN_SUBMITTED, requestId, runnable);
+                if (runnable instanceof DistributedFuture) {
+                    Callable<?> callable = ((DistributedFuture<?>)runnable).getCallable();
+                    sendRequest(owner.getAddress(), Type.RUN_SUBMITTED, 
+                        requestId, callable);
+                }
+                else {
+                    sendRequest(owner.getAddress(), Type.RUN_SUBMITTED, 
+                        requestId, runnable);
+                }
             }
         }
     }
 
     protected void handleTaskSubmittedRequest(Runnable runnable, Address source, 
-                                              short requestId) {
+                                              long requestId) {
         // We store in our map so that when that task is
         // finished so that we can send back to the owner
         // with the results
@@ -583,10 +675,11 @@ abstract public class Executing extends Protocol {
              * in case if the _tasks.take() call isn't registered quick
              * enough after sending the Type.CONSUMER_READY message
              */
-            received = _tasks.offer(runnable, 100, TimeUnit.MILLISECONDS);
+            received = _tasks.offer(runnable, 1000, TimeUnit.SECONDS);
         }
         catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            System.out.println("Interrupted while handing off");
         }
         
         if (!received) {
@@ -597,40 +690,55 @@ abstract public class Executing extends Protocol {
         }
     }
     
-    protected void handleTaskRejectedResponse(Address source, short requestId) {
+    protected void handleTaskRejectedResponse(Address source, long requestId) {
         Runnable runnable = _awaitingReturn.remove(new Owner(
             source, requestId));
         if (runnable != null) {
             _awaitingConsumer.add(runnable);
-            sendToCoordinator(Type.RUN_REQUEST, local_addr);
+            Long taskRequestId = _requestId.get(runnable);
+            if (taskRequestId != requestId) {
+                log.warn("Task Request Id doesn't match in rejection");
+            }
+            sendToCoordinator(Type.RUN_REQUEST, taskRequestId, local_addr);
         }
         else {
             log.error("error resubmitting task for request-id: " + requestId);
         }
     }
 
-    protected void handleValueResponse(Address source, Request req) {
+    protected void handleValueResponse(Address source, long requestId, Object value) {
         Runnable runnable = _awaitingReturn.remove(
-            new Owner(source, req.request));
+            new Owner(source, requestId));
+        
+        if (runnable != null) {
+            _requestId.remove(runnable);
+        }
         // We can only notify of success if it was a future
         if (runnable instanceof RunnableFuture<?>) {
             RunnableFuture<?> future = (RunnableFuture<?>)runnable;
             ExecutorNotification notifier = notifiers.remove(future);
             if (notifier != null) {
-                notifier.resultReturned(req.object);
+                notifier.resultReturned(value);
             }
+        }
+        else {
+            log.warn("Runnable was not found in awaiting");
         }
     }
 
-    protected void handleExceptionResponse(Address source, Request req) {
+    protected void handleExceptionResponse(Address source, long requestId, Throwable throwable) {
         Runnable runnable = _awaitingReturn.remove(
-            new Owner(source, req.request));
+            new Owner(source, requestId));
+        
+        if (runnable != null) {
+            _requestId.remove(runnable);
+        }
         // We can only notify of exception if it was a future
         if (runnable instanceof RunnableFuture<?>) {
             RunnableFuture<?> future = (RunnableFuture<?>)runnable;
             ExecutorNotification notifier = notifiers.remove(future);
             if (notifier != null) {
-                notifier.throwableEncountered((Throwable)req.object);
+                notifier.throwableEncountered(throwable);
             }
         }
         else {
@@ -639,36 +747,37 @@ abstract public class Executing extends Protocol {
             // have a future object.
             log.error("Runtime Error encountered from "
                     + "Cluster execute(Runnable) method",
-                (Throwable) req.object);
+                    throwable);
         }
     }
 
-    protected void handleInterruptRequest(Address source, short requestId) {
+    protected void handleInterruptRequest(Address source, long requestId) {
         Owner owner = new Owner(source, requestId);
         Runnable runnable = removeKeyForValue(_running, owner);
+        Thread thread = null;
         if (runnable != null) {
-            Thread thread = _runnableThreads.remove(runnable);
+            thread = _runnableThreads.remove(runnable);
+        }
+        if (thread != null) {
             thread.interrupt();
         }
-        else {
-            // TODO: do we do something here?  This would happen if an 
-            // interrupt comes in after the task is finished.
-            if (log.isTraceEnabled())
-                log.trace("Message could not be interrupted due to it already returned");
-        }
+        else if (log.isTraceEnabled())
+            log.trace("Message could not be interrupted due to it already returned");
     }
 
-    protected void handleNewRunRequest(Address sender) {
+    protected void handleNewRunRequest(Owner sender) {
         _consumerLock.lock();
         try {
-            _runRequests.add(sender);
+            if (!_runRequests.contains(sender)) {
+                _runRequests.add(sender);
+            }
         }
         finally {
             _consumerLock.unlock();
         }
     }
 
-    protected void handleRemoveRunRequest(Address sender) {
+    protected void handleRemoveRunRequest(Owner sender) {
         _consumerLock.lock();
         try {
             _runRequests.remove(sender);
@@ -678,17 +787,19 @@ abstract public class Executing extends Protocol {
         }
     }
     
-    protected void handleNewConsumer(Address sender) {
+    protected void handleNewConsumer(Owner sender) {
         _consumerLock.lock();
         try {
-            _consumersAvailable.add(sender);
+            if (!_consumersAvailable.contains(sender)) {
+                _consumersAvailable.add(sender);
+            }
         }
         finally {
             _consumerLock.unlock();
         }
     }
 
-    protected void handleRemoveConsumer(Address sender) {
+    protected void handleRemoveConsumer(Owner sender) {
         _consumerLock.lock();
         try {
             _consumersAvailable.remove(sender);
@@ -698,7 +809,7 @@ abstract public class Executing extends Protocol {
         }
     }
     
-    protected void sendRequest(Address dest, Type type, short requestId, Object object) {
+    protected void sendRequest(Address dest, Type type, long requestId, Object object) {
         Request req=new Request(type, object, requestId);
         Message msg=new Message(dest, null, req);
         msg.putHeader(id, new ExecutorHeader());
@@ -711,7 +822,7 @@ abstract public class Executing extends Protocol {
         }
         catch(Exception ex) {
             log.error("failed sending " + type + " request: " + ex);
-        }
+        }  
     }
     
     /**
@@ -719,23 +830,23 @@ abstract public class Executing extends Protocol {
      * the response doesn't have to send back the future but instead the counter
      * We just let this roll over
      */
-    protected static final AtomicInteger counter = new AtomicInteger();
+    protected static final AtomicLong counter = new AtomicLong();
 
     protected static class Request implements Streamable {
         protected Type    type;
         protected Object  object;
-        protected short   request;
+        protected long   request;
         
         public Request() {
         }
 
-        public Request(Type type, Object object, short request) {
+        public Request(Type type, Object object, long request) {
             this.type=type;
             this.object=object;
             this.request=request;
         }
 
-        public void writeTo(DataOutputStream out) throws IOException {
+        public void writeTo(DataOutput out) throws Exception {
             out.writeByte(type.ordinal());
             // We can't use Util.writeObject since it's size is limited to 2^15-1
             try {
@@ -755,10 +866,10 @@ abstract public class Executing extends Protocol {
             catch (Exception e) {
                 throw new IOException("Exception encountered while serializing execution request", e);
             }
-            out.writeShort(request);
+            out.writeLong(request);
         }
 
-        public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
+        public void readFrom(DataInput in) throws Exception {
             type=Type.values()[in.readByte()];
             // We can't use Util.readObject since it's size is limited to 2^15-1
             try {
@@ -783,7 +894,7 @@ abstract public class Executing extends Protocol {
             catch (Exception e) {
                 throw new IOException("Exception encountered while serializing execution request", e);
             }
-            request=in.readShort();
+            request=in.readLong();
         }
 
         public String toString() {
@@ -801,18 +912,18 @@ abstract public class Executing extends Protocol {
             return 0;
         }
 
-        public void writeTo(DataOutputStream out) throws IOException {
+        public void writeTo(DataOutput out) throws Exception {
         }
 
-        public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
+        public void readFrom(DataInput in) throws Exception {
         }
     }
     
     public static class Owner {
-        final protected Address address;
-        final protected short requestId;
-
-        public Owner(Address address, short requestId) {
+        protected final Address address;
+        protected final long requestId;
+        
+        public Owner(Address address, long requestId) {
             this.address=address;
             this.requestId=requestId;
         }
@@ -821,7 +932,7 @@ abstract public class Executing extends Protocol {
             return address;
         }
 
-        public short getRequestId() {
+        public long getRequestId() {
             return requestId;
         }
         
@@ -832,7 +943,7 @@ abstract public class Executing extends Protocol {
             int result = 1;
             result = prime * result
                     + ((address == null) ? 0 : address.hashCode());
-            result = prime * result + requestId;
+            result = prime * result + (int) (requestId ^ (requestId >>> 32));
             return result;
         }
 
@@ -855,5 +966,4 @@ abstract public class Executing extends Protocol {
             return address + "::" + requestId;
         }
     }
-
 }

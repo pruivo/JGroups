@@ -4,11 +4,14 @@ package org.jgroups.protocols;
 import org.jgroups.*;
 import org.jgroups.annotations.Experimental;
 import org.jgroups.annotations.Property;
+import org.jgroups.annotations.Unsupported;
 import org.jgroups.stack.Protocol;
 import org.jgroups.util.Util;
 
-import java.io.*;
-import java.util.Vector;
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.util.ArrayList;
+import java.util.List;
 
 
 /**
@@ -18,21 +21,15 @@ import java.util.Vector;
  * This protocol has not yet been completed and is experimental at best !
  * @author Bela Ban
  */
-@Experimental
+@Experimental @Unsupported
 public class HTOTAL extends Protocol {
     Address coord=null;
     Address neighbor=null; // to whom do we forward the message (member to the right, or null if we're at the tail)
     Address local_addr=null;
-    Vector  mbrs=new Vector();
+    List<Address> mbrs=new ArrayList<Address>();
     boolean is_coord=false;
     @Property
     private boolean use_multipoint_forwarding=false;
-
-
-
-
-    public HTOTAL() {
-    }
 
 
     public Object down(Event evt) {
@@ -46,7 +43,7 @@ public class HTOTAL extends Protocol {
             case Event.MSG:
                 Message msg=(Message)evt.getArg();
                 Address dest=msg.getDest();
-                if(dest == null || dest.isMulticastAddress()) { // only process multipoint messages
+                if(dest == null) { // only process multipoint messages
                     if(coord == null)
                         log.error("coordinator is null, cannot send message to coordinator");
                     else {
@@ -113,19 +110,19 @@ public class HTOTAL extends Protocol {
         mbrs.clear();
         mbrs.addAll(v.getMembers());
 
-        coord=(Address)(mbrs != null && !mbrs.isEmpty()? mbrs.firstElement() : null);
+        coord=mbrs != null && !mbrs.isEmpty()? mbrs.get(0) : null;
         is_coord=coord != null && local_addr != null && coord.equals(local_addr);
 
         if(mbrs == null || mbrs.size() < 2 || local_addr == null)
             neighbor=null;
         else {
             for(int i=0; i < mbrs.size(); i++) {
-                tmp=mbrs.elementAt(i);
+                tmp=mbrs.get(i);
                 if(local_addr.equals(tmp)) {
                     if(i + 1 >= mbrs.size())
                         retval=null; // we don't wrap, last member is null
                     else
-                        retval=(Address)mbrs.elementAt(i + 1);
+                        retval=mbrs.get(i + 1);
                     break;
                 }
             }
@@ -147,12 +144,12 @@ public class HTOTAL extends Protocol {
             this.src=src;
         }
 
-        public void writeTo(DataOutputStream out) throws IOException {
+        public void writeTo(DataOutput out) throws Exception {
             Util.writeAddress(dest, out);
             Util.writeAddress(src, out);
         }
 
-        public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
+        public void readFrom(DataInput in) throws Exception {
             dest=Util.readAddress(in);
             src=Util.readAddress(in);
         }

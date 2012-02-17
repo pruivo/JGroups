@@ -72,20 +72,12 @@ public class JDKLogImpl implements Log {
         logger.log(Level.SEVERE, msg);
     }
 
-    public void trace(Object msg, Throwable t) {
-        logger.log(Level.FINER, msg.toString(), t);
-    }
-
     public void trace(String msg, Throwable t) {
         logger.log(Level.FINER, msg, t);
     }
 
     public void debug(String msg, Throwable t) {
         logger.log(Level.FINE, msg, t);
-    }
-
-    public void info(String msg, Throwable t) {
-        logger.log(Level.INFO, msg, t);
     }
 
     public void warn(String msg, Throwable t) {

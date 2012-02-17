@@ -1,10 +1,7 @@
 package org.jgroups.demos;
 
 import org.jgroups.*;
-import org.jgroups.blocks.MethodCall;
-import org.jgroups.blocks.Request;
-import org.jgroups.blocks.RequestOptions;
-import org.jgroups.blocks.RpcDispatcher;
+import org.jgroups.blocks.*;
 import org.jgroups.util.Rsp;
 import org.jgroups.util.RspList;
 import org.jgroups.util.Util;
@@ -48,20 +45,20 @@ public class RelayDemoRpc extends ReceiverAdapter {
         ch=new JChannel(props);
         if(name != null)
             ch.setName(name);
-        disp=new RpcDispatcher(ch, null, this, this);
+        disp=new RpcDispatcher(ch, this);
         ch.connect("RelayDemo");
         local_addr=ch.getAddress();
 
         MethodCall call=new MethodCall(getClass().getMethod("handleMessage", String.class, Address.class));
         for(;;) {
             String line=Util.readStringFromStdin(": ");
-            call.setArgs(new Object[]{line, local_addr});
+            call.setArgs(line, local_addr);
             if(line.equalsIgnoreCase("unicast")) {
 
                 for(Address dest: view.getMembers()) {
                     System.out.println("invoking method in " + dest + ": ");
                     try {
-                        Object rsp=disp.callRemoteMethod(dest, call, new RequestOptions(Request.GET_ALL, 5000));
+                        Object rsp=disp.callRemoteMethod(dest, call, new RequestOptions(ResponseMode.GET_ALL, 5000));
                         System.out.println("rsp from " + dest + ": " + rsp);
                     }
                     catch(Throwable throwable) {
@@ -71,7 +68,7 @@ public class RelayDemoRpc extends ReceiverAdapter {
                 continue;
             }
 
-            RspList rsps=disp.callRemoteMethods(null, call, new RequestOptions(Request.GET_ALL, 5000).setAnycasting(true));
+            RspList<Object> rsps=disp.callRemoteMethods(null, call, new RequestOptions(ResponseMode.GET_ALL, 5000).setAnycasting(true));
             for(Rsp rsp: rsps.values())
                 System.out.println("<< " + rsp.getValue() + " from " + rsp.getSender());
         }

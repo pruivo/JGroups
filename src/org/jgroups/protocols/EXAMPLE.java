@@ -10,15 +10,13 @@ import org.jgroups.annotations.Unsupported;
 import org.jgroups.stack.Protocol;
 
 import java.io.Serializable;
-import java.util.Vector;
+import java.util.ArrayList;
+import java.util.List;
 
 
 class ExampleHeader implements Serializable {
     private static final long serialVersionUID=-8802317525466899597L;
     // your variables
-
-    ExampleHeader() {
-    }
 
     public String toString() {
         return "[EXAMPLE: <variables> ]";
@@ -32,7 +30,7 @@ class ExampleHeader implements Serializable {
 @Unsupported
 @MBean(description="Sample protocol")
 public class EXAMPLE extends Protocol {
-    final Vector<Address> members=new Vector<Address>();
+    final List<Address> members=new ArrayList<Address>();
 
 
     /**
@@ -61,12 +59,11 @@ public class EXAMPLE extends Protocol {
         switch(evt.getType()) {
             case Event.TMP_VIEW:
             case Event.VIEW_CHANGE:
-                Vector<Address> new_members=((View)evt.getArg()).getMembers();
+                List<Address> new_members=((View)evt.getArg()).getMembers();
                 synchronized(members) {
-                    members.removeAllElements();
+                    members.clear();
                     if(new_members != null && !new_members.isEmpty())
-                        for(int i=0; i < new_members.size(); i++)
-                            members.addElement(new_members.elementAt(i));
+                        members.addAll(new_members);
                 }
                 return down_prot.down(evt);
 

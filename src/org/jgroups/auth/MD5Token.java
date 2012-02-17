@@ -1,8 +1,7 @@
 package org.jgroups.auth;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
+import java.io.DataInput;
+import java.io.DataOutput;
 
 import org.jgroups.Message;
 import org.jgroups.annotations.Property;
@@ -32,7 +31,6 @@ public class MD5Token extends AuthToken {
 
     @Property(name = "token_hash")
     private String hash_type = "MD5";
-    private static final long serialVersionUID = -5787154335375249191L;
 
     public MD5Token() {
         // need an empty constructor
@@ -121,15 +119,14 @@ public class MD5Token extends AuthToken {
         return false;
     }
 
-    public void writeTo(DataOutputStream out) throws IOException {
+    public void writeTo(DataOutput out) throws Exception {
         if (log.isDebugEnabled()) {
             log.debug("MD5Token writeTo()");
         }
         Util.writeString(this.auth_value, out);
     }
 
-    public void readFrom(DataInputStream in) throws IOException, IllegalAccessException,
-                    InstantiationException {
+    public void readFrom(DataInput in) throws Exception {
         if (log.isDebugEnabled()) {
             log.debug("MD5Token readFrom()");
         }

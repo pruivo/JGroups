@@ -43,12 +43,12 @@ public class UNICAST_ContentionTest {
         c2.connect("testSimpleMessageReception");
 
         int NUM=100;
-        Address c1_addr=c1.getLocalAddress(), c2_addr=c2.getLocalAddress();
+        Address c1_addr=c1.getAddress(), c2_addr=c2.getAddress();
         for(int i=1; i <= NUM; i++) {
-            c1.send(c1_addr, null, "bla");
-            c1.send(c2_addr, null, "bla");
-            c2.send(c2_addr, null, "bla");
-            c2.send(c1_addr, null, "bla");
+            c1.send(c1_addr, "bla");
+            c1.send(c2_addr, "bla");
+            c2.send(c2_addr, "bla");
+            c2.send(c1_addr, "bla");
         }
 
         for(int i=0; i < 10; i++) {
@@ -80,7 +80,7 @@ public class UNICAST_ContentionTest {
         c1.connect("testSimpleMessageReception");
         c2.connect("testSimpleMessageReception");
 
-        Address c1_addr=c1.getLocalAddress(), c2_addr=c2.getLocalAddress();
+        Address c1_addr=c1.getAddress(), c2_addr=c2.getAddress();
         MySender[] c1_senders=new MySender[NUM_THREADS];
         for(int i=0; i < c1_senders.length; i++) {
             c1_senders[i]=new MySender(c1, c2_addr, latch);
@@ -97,10 +97,10 @@ public class UNICAST_ContentionTest {
 
         long NUM_EXPECTED_MSGS=NUM_THREADS * NUM_MSGS;
 
-        for(int i=0; i < 100; i++) {
+        for(int i=0; i < 20; i++) {
             if(r1.getNum() == NUM_EXPECTED_MSGS && r2.getNum() == NUM_EXPECTED_MSGS)
                 break;
-            Util.sleep(500);
+            Util.sleep(2000);
             UNICAST2 unicast2=(UNICAST2)c1.getProtocolStack().findProtocol(UNICAST2.class);
             if(unicast2 != null)
                 unicast2.sendStableMessages();

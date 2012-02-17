@@ -12,13 +12,7 @@ import java.security.SecureRandom;
  * @author Bela Ban
  */
 public class PayloadUUID extends UUID {
-    private static final long serialVersionUID=-7042544908572216601L;
-
-    // don't need this as we already added PayloadUUID to jg-magic-map.xml
-    //    static {
-    //        ClassConfigurator.add((short)2222, PayloadUUID.class);
-    //    }
-
+    private static final long serialVersionUID = -7920418038143502913L;
     protected String payload;
 
     public PayloadUUID() {
@@ -64,25 +58,36 @@ public class PayloadUUID extends UUID {
         return retval;
     }
 
-    public void writeTo(DataOutputStream out) throws IOException {
-        super.writeTo(out);
-        Util.writeString(payload, out);
-    }
-
-    public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
-        super.readFrom(in);
-        payload=Util.readString(in);
-    }
-
     public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
         super.readExternal(in);
-        payload=(String)in.readObject();
+        try {
+            payload=Util.readString(in);
+        }
+        catch(Exception e) {
+            throw new IOException(e);
+        }
     }
 
     public void writeExternal(ObjectOutput out) throws IOException {
         super.writeExternal(out);
-        out.writeObject(payload);
+        try {
+            Util.writeString(payload, out);
+        }
+        catch(Exception e) {
+            throw new IOException(e);
+        }
     }
+
+    public void writeTo(DataOutput out) throws Exception {
+        super.writeTo(out);
+        Util.writeString(payload, out);
+    }
+
+    public void readFrom(DataInput in) throws Exception {
+        super.readFrom(in);
+        payload=Util.readString(in);
+    }
+
 
     public String toString() {
         if(print_uuids)

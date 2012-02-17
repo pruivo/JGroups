@@ -27,7 +27,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Test(groups={Global.STACK_INDEPENDENT}, sequential=true)
 public class GMS_MergeTest extends ChannelTestBase {
     static final String simple_props="SHARED_LOOPBACK:PING(timeout=1000):" +
-            "pbcast.NAKACK(use_mcast_xmit=false;gc_lag=0;log_discard_msgs=false;log_not_found_msgs=false)" +
+            "pbcast.NAKACK(use_mcast_xmit=false;log_discard_msgs=false;log_not_found_msgs=false)" +
             ":UNICAST:pbcast.STABLE(stability_delay=200):pbcast.GMS:FC:FRAG2";
 
     static final String flush_props=simple_props + ":pbcast.FLUSH";
@@ -86,7 +86,7 @@ public class GMS_MergeTest extends ChannelTestBase {
     
     
     /**
-     * Simulates the death of a merge leader after having sent a MERG_REQ. Because there is no MergeView or CANCEL_MERGE
+     * Simulates the death of a merge leader after having sent a MERGE_REQ. Because there is no MergeView or CANCEL_MERGE
      * message, the MergeCanceller has to null merge_id after a timeout
      */
     static void _testMergeRequestTimeout(String props, String cluster_name) throws Exception {
@@ -100,25 +100,22 @@ public class GMS_MergeTest extends ChannelTestBase {
             merge_request.putHeader(GMS_ID, hdr);
             GMS gms=(GMS)c1.getProtocolStack().findProtocol(GMS.class);
             gms.setMergeTimeout(2000);
-            MergeId merge_id=gms.getMergeId();
+            MergeId merge_id=gms._getMergeId();
             assert merge_id == null;
             System.out.println("starting merge");
             gms.up(new Event(Event.MSG, merge_request));
-            merge_id=gms.getMergeId();
-            System.out.println("merge_id = " + merge_id);
-            assert new_merge_id.equals(merge_id);
 
-            long timeout=gms.getMergeTimeout() * 2;
+            long timeout=gms.getMergeTimeout() * 10;
             System.out.println("sleeping for " + timeout + " ms, then fetching merge_id: should be null (cancelled by the MergeCanceller)");
             long target_time=System.currentTimeMillis() + timeout;
             while(System.currentTimeMillis() < target_time) {
-                merge_id=gms.getMergeId();
+                merge_id=gms._getMergeId();
                 if(merge_id == null)
                     break;
                 Util.sleep(500);
             }
 
-            merge_id=gms.getMergeId();
+            merge_id=gms._getMergeId();
             System.out.println("merge_id = " + merge_id);
             assert merge_id == null : "MergeCanceller didn't kick in";
         }
@@ -191,12 +188,13 @@ public class GMS_MergeTest extends ChannelTestBase {
             checkViews(channels, "C", "C", "D");
             checkViews(channels, "D", "C", "D");
 
+            Address merge_leader=determineLeader(channels, "A", "C");
+
             long end_time=System.currentTimeMillis() + 30000;
             do {
                 System.out.println("\n==== injecting merge events into A and C concurrently ====");
-                injectMergeEvent(channels, "C", "A", "C");
-                injectMergeEvent(channels, "A", "A", "C");
-                Util.sleep(1000);
+                injectMergeEvent(channels, merge_leader, "A", "C");
+                Util.sleep(2000);
                 if(allChannelsHaveViewOf(channels, 4))
                     break;
             }
@@ -237,14 +235,13 @@ public class GMS_MergeTest extends ChannelTestBase {
             checkViews(channels, "G", "G", "H");
             checkViews(channels, "H", "G", "H");
 
+            Address merge_leader=determineLeader(channels, "A", "C", "E", "G");
+
             long end_time=System.currentTimeMillis() + 30000;
             do {
-                System.out.println("\n==== injecting merge event into A, C, E and G concurrently ====");
-                injectMergeEvent(channels, "G", "A", "C", "E", "G");
-                injectMergeEvent(channels, "E", "A", "C", "E", "G");
-                injectMergeEvent(channels, "A", "A", "C", "E", "G");
-                injectMergeEvent(channels, "C", "A", "C", "E", "G");
-                Util.sleep(1000);
+                System.out.println("\n==== injecting merge event into " + merge_leader + " ====");
+                injectMergeEvent(channels, merge_leader, "A", "C", "E", "G");
+                Util.sleep(2000);
                 if(allChannelsHaveViewOf(channels, 8))
                     break;
             }
@@ -252,6 +249,7 @@ public class GMS_MergeTest extends ChannelTestBase {
 
             print(channels);
             assertAllChannelsHaveViewOf(channels, 8);
+            disableTracing(channels);
         }
         finally {
             close(channels);
@@ -290,7 +288,7 @@ public class GMS_MergeTest extends ChannelTestBase {
              System.out.println("sending " + NUM + " msgs:");
              for(int i=0; i < NUM; i++)
                  for(JChannel ch: channels)
-                     ch.send(null, null, "Number #" + i + " from " + ch.getAddress());
+                     ch.send(null, "Number #" + i + " from " + ch.getAddress());
 
              waitForNumMessages(NUM * channels.length, 10000, 1000, receivers);
              checkMessages(NUM * channels.length, receivers);
@@ -317,9 +315,9 @@ public class GMS_MergeTest extends ChannelTestBase {
 
              System.out.println("B and C exchange " + NUM + " messages, A discards them");
              for(int i=0; i < NUM; i++)
-                 b.send(null, null, "message #" + i +" from B");
+                 b.send(null, "message #" + i +" from B");
              for(int i=0; i < NUM; i++)
-                 c.send(null, null, "message #" + i +" from C");
+                 c.send(null, "message #" + i +" from C");
              waitForNumMessages(NUM * 2, 10000, 500, receivers[0], receivers[2]); // A *does* receiver B's and C's messages !
              checkMessages(NUM * 2, receivers[0], receivers[2]);
              checkMessages(0, receivers[1]);
@@ -402,7 +400,7 @@ public class GMS_MergeTest extends ChannelTestBase {
              System.out.println("sending " + NUM + " msgs:");
              for(int i=0; i < NUM; i++)
                  for(JChannel ch: channels)
-                     ch.send(null, null, "Number #" + i + " from " + ch.getAddress());
+                     ch.send(null, "Number #" + i + " from " + ch.getAddress());
 
              waitForNumMessages(NUM * channels.length, 10000, 1000, receivers);
              checkMessages(NUM * channels.length, receivers);
@@ -421,24 +419,17 @@ public class GMS_MergeTest extends ChannelTestBase {
              Digest db=((NAKACK)b.getProtocolStack().findProtocol(NAKACK.class)).getDigest();
              System.out.println("(after purging)\nDigest A: " + da + "\nDigest B: " + db);
 
+             Address merge_leader=determineLeader(channels, "A", "B");
+
              long end_time=System.currentTimeMillis() + 12000;
              do {
-                 System.out.println("\n==== injecting merge event ====");
-                 injectMergeEvent(channels, a.getAddress(), "A", "B");
-                  injectMergeEvent(channels, b.getAddress(), "A", "B");
+                 System.out.println("\n==== injecting merge event into " + merge_leader + " ====");
+                 injectMergeEvent(channels, merge_leader, "A", "B");
                  Util.sleep(3000);
                  if(allChannelsHaveView(channels, a.getView()))
                      break;
              }
              while(end_time > System.currentTimeMillis());
-
-            /* long end_time=System.currentTimeMillis() + 12000;
-             do {
-                 if(allChannelsHaveView(channels, a.getView()))
-                     break;
-                 Util.sleep(3000);
-             }
-             while(end_time > System.currentTimeMillis());*/
 
              System.out.println("\n");
              print(channels);
@@ -577,15 +568,22 @@ public class GMS_MergeTest extends ChannelTestBase {
         }
     }
 
+    protected static void disableTracing(JChannel[] channels) {
+        for(JChannel ch: channels) {
+            GMS gms=(GMS)ch.getProtocolStack().findProtocol(GMS.class);
+            gms.setLevel("warn");
+        }
+    }
+
     private static View createView(String[] partition, JChannel[] channels) throws Exception {
-        Vector<Address> members=new Vector<Address>(partition.length);
+        List<Address> members=new ArrayList<Address>(partition.length);
         for(String tmp: partition) {
             Address addr=findAddress(tmp, channels);
             if(addr == null)
                 throw new Exception(tmp + " not associated with a channel");
             members.add(addr);
         }
-        return new View(members.firstElement(), 10, members);
+        return new View(members.get(0), 10, members);
     }
 
     private static void checkViews(JChannel[] channels, String channel_name, String ... members) {
@@ -685,31 +683,31 @@ public class GMS_MergeTest extends ChannelTestBase {
     private static class MyChannel extends JChannel {
         protected int id=0;
 
-        public MyChannel() throws ChannelException {
+        private MyChannel() throws Exception {
             super();
         }
 
-        public MyChannel(File properties) throws ChannelException {
+        private MyChannel(File properties) throws Exception {
             super(properties);
         }
 
-        public MyChannel(Element properties) throws ChannelException {
+        private MyChannel(Element properties) throws Exception {
             super(properties);
         }
 
-        public MyChannel(URL properties) throws ChannelException {
+        private MyChannel(URL properties) throws Exception {
             super(properties);
         }
 
-        public MyChannel(String properties) throws ChannelException {
+        private MyChannel(String properties) throws Exception {
             super(properties);
         }
 
-        public MyChannel(ProtocolStackConfigurator configurator) throws ChannelException {
+        private MyChannel(ProtocolStackConfigurator configurator) throws Exception {
             super(configurator);
         }
 
-        public MyChannel(JChannel ch) throws ChannelException {
+        private MyChannel(JChannel ch) throws Exception {
             super(ch);
         }
 
@@ -740,7 +738,7 @@ public class GMS_MergeTest extends ChannelTestBase {
         private final String name;
         private AtomicInteger num_msgs=new AtomicInteger(0);
 
-        public MyReceiver(String name) {
+        private MyReceiver(String name) {
             this.name=name;
         }
 

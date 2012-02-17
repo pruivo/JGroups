@@ -8,6 +8,7 @@ import org.jgroups.util.TimeScheduler;
 import org.jgroups.util.Util;
 
 import java.util.*;
+import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
@@ -40,10 +41,9 @@ import java.util.concurrent.locks.ReentrantLock;
  * @author Bela Ban, Oct 16 2001
  */
 @MBean(description="Protocol to discover subgroups existing due to a network partition")
-@DeprecatedProperty(names={"use_separate_thread"})
 public class MERGE2 extends Protocol {
     
-    
+
     /* -----------------------------------------    Properties     -------------------------------------------------- */
     
     @Property(description="Minimum time in msbetween runs to discover other clusters")
@@ -56,7 +56,7 @@ public class MERGE2 extends Protocol {
     protected int inconsistent_view_threshold=1;
 
     @Property(description="When receiving a multicast message, checks if the sender is member of the cluster. " +
-            "If not, initiates a merge")
+      "If not, initiates a merge. Generates a lot of traffic for large clusters when there is a lot of merging")
     protected boolean merge_fast=true;
 
     @Property(description="The delay (in milliseconds) after which a merge fast execution is started")
@@ -71,41 +71,37 @@ public class MERGE2 extends Protocol {
 
     /* --------------------------------------------- Fields ------------------------------------------------------ */
 
-    private Address local_addr=null;
+    protected Address local_addr=null;
 
-    private View view;
+    protected View view;
 
-    private final Set<Address> members=new HashSet<Address>();
+    protected final Set<Address> members=new HashSet<Address>();
 
-    private final Set<Address> merge_candidates=new HashSet<Address>();
+    protected final Set<Address> merge_candidates=new CopyOnWriteArraySet<Address>();
     
-    private final FindSubgroupsTask task=new FindSubgroupsTask();   
+    protected final FindSubgroupsTask task=new FindSubgroupsTask();
     
-    private volatile boolean is_coord=false;
+    protected volatile boolean is_coord=false;
     
-    private TimeScheduler timer;
+    protected TimeScheduler timer;
 
     @ManagedAttribute(description="Number of inconsistent 1-coord views until a MERGE event is sent up the stack")
-    private int num_inconsistent_views=0;
+    protected int num_inconsistent_views=0;
 
-
-
-    public MERGE2() {
-    }
+    @ManagedAttribute(description="Number of times a MERGE event was sent up the stack")
+    protected int num_merge_events=0;
 
 
     public void init() throws Exception {
         timer=getTransport().getTimer();
         if(timer == null)
             throw new Exception("timer cannot be retrieved");
-        
-        if(min_interval <= 0 || max_interval <= 0) {
+
+        if(min_interval <= 0 || max_interval <= 0)
             throw new Exception("min_interval and max_interval have to be > 0");            
-        }
         
-        if(max_interval <= min_interval) {
+        if(max_interval <= min_interval)
             throw new Exception ("max_interval has to be greater than min_interval");        
-        }  
     }
 
     public long getMinInterval() {
@@ -122,12 +118,15 @@ public class MERGE2 extends Protocol {
 
     public void setMaxInterval(long l) {
         max_interval=l;
-    }  
+    }
 
-    public Vector<Integer> requiredDownServices() {
-        Vector<Integer> retval=new Vector<Integer>(1);
-        retval.addElement(new Integer(Event.FIND_INITIAL_MBRS));
-        return retval;
+    protected boolean isMergeRunning() {
+        Object retval=up_prot.up(new Event(Event.IS_MERGE_IN_PROGRESS));
+        return retval instanceof Boolean && ((Boolean)retval).booleanValue();
+    }
+
+    public List<Integer> requiredDownServices() {
+        return Arrays.asList(Event.FIND_INITIAL_MBRS, Event.FIND_ALL_VIEWS);
     }
 
     /** Discovers members and detects whether we have multiple coordinator. If so, kicks off a merge */
@@ -153,7 +152,7 @@ public class MERGE2 extends Protocol {
             case Event.VIEW_CHANGE:
                 Object ret=down_prot.down(evt);
                 view=(View)evt.getArg();
-                Vector<Address> mbrs=view.getMembers();
+                List<Address> mbrs=view.getMembers();
                 if(mbrs == null || mbrs.isEmpty() || local_addr == null) {
                     task.stop();
                     return ret;
@@ -161,17 +160,15 @@ public class MERGE2 extends Protocol {
                 members.clear();
                 members.addAll(mbrs);
                 merge_candidates.removeAll(members);
-                Address coord=mbrs.elementAt(0);
-                if(coord.equals(local_addr)) {
+                Address coord=mbrs.isEmpty()? null : mbrs.get(0);
+                if(coord != null && coord.equals(local_addr)) {
                     is_coord=true;
                     task.start(); // start task if we became coordinator (doesn't start if already running)
                 }
                 else {
                     // if we were coordinator, but are no longer, stop task. this happens e.g. when we merge and someone
                     // else becomes the new coordinator of the merged group
-                    if(is_coord) {
-                        is_coord=false;
-                    }
+                    is_coord=false;
                     task.stop();
                 }
                 return ret;
@@ -192,8 +189,7 @@ public class MERGE2 extends Protocol {
                     break;
                 Message msg=(Message)evt.getArg();
                 Address dest=msg.getDest();
-                boolean multicast=dest == null || dest.isMulticastAddress();
-                if(!multicast)
+                if(dest != null)
                     break;
                 final Address sender=msg.getSrc();
                 if(!members.contains(sender) && merge_candidates.add(sender)) {
@@ -214,18 +210,22 @@ public class MERGE2 extends Protocol {
 	 * whether there are subgroups (multiple coordinators for the same group). If yes, it sends a MERGE event
 	 * with the list of the coordinators up the stack
 	 */
-    private class FindSubgroupsTask {
+    protected class FindSubgroupsTask {
         @GuardedBy("this")
         private Future<?> future;
         private Lock      lock=new ReentrantLock();
 
         public synchronized void start() {
-            if(future == null || future.isDone() || future.isCancelled()) {
-                future=timer.scheduleWithFixedDelay(new Runnable() {
+            if(future == null || future.isDone()) {
+                future=timer.scheduleWithDynamicInterval(new TimeScheduler.Task() {
+                    public long nextInterval() {
+                        return computeInterval();
+                    }
+
                     public void run() {
                         findAndNotify();
                     }
-                },  Math.max(5000L, computeInterval()), computeInterval(), TimeUnit.MILLISECONDS);
+                });
             }
         }
 
@@ -237,14 +237,19 @@ public class MERGE2 extends Protocol {
         }
 
         public synchronized boolean isRunning() {
-            return future != null && !future.isDone() && !future.isCancelled();
+            return future != null && !future.isDone();
         }
 
 
         public void findAndNotify() {
+            if(isMergeRunning())
+                return;
             if(lock.tryLock()) {
                 try {
                     _findAndNotify();
+                }
+                catch(Throwable t) {
+                    log.error("FindSubgroupsTask failed", t);
                 }
                 finally {
                     lock.unlock();
@@ -252,14 +257,14 @@ public class MERGE2 extends Protocol {
             }
         }
 
-        private void _findAndNotify() {
-            List<PingData> discovery_rsps=findAllMembers();
+        protected void _findAndNotify() {
+            List<PingData> discovery_rsps=findAllViews();
 
             if(log.isTraceEnabled()) {
                 StringBuilder sb=new StringBuilder();
                 sb.append("Discovery results:\n");
                 for(PingData data: discovery_rsps)
-                    sb.append("[" + data.getAddress() + "]: " + data.getView()).append("\n");
+                    sb.append("[" + data.getAddress() + "]: " + data.printViewId()).append("\n");
                 log.trace(sb);
             }
 
@@ -276,9 +281,9 @@ public class MERGE2 extends Protocol {
             if(merge_participants.size() == 1) {
                 if(num_inconsistent_views < inconsistent_view_threshold) {
                     if(log.isDebugEnabled())
-                        log.debug("dropping MERGE for inconsistent views " + Util.printViews(different_views) +
-                                " as inconsistent view threshold (" + inconsistent_view_threshold +
-                                ") has not yet been reached (" + num_inconsistent_views + ")");
+                        log.debug(local_addr + ": dropping MERGE for inconsistent views " + Util.printViews(different_views) +
+                                    " as inconsistent view threshold (" + inconsistent_view_threshold +
+                                    ") has not yet been reached (" + num_inconsistent_views + ")");
                     num_inconsistent_views++;
                     return;
                 }
@@ -294,12 +299,13 @@ public class MERGE2 extends Protocol {
                         "; sending up MERGE event with merge participants " + merge_participants + ".\n");
                 sb.append("Discovery results:\n");
                 for(PingData data: discovery_rsps)
-                    sb.append("[" + data.getAddress() + "]: " + data.getView()).append("\n");
+                    sb.append("[" + data.getAddress() + "]: coord=" + data.getCoordAddress()).append("\n");
                 log.debug(sb.toString());
             }
             Event evt=new Event(Event.MERGE, views);
             try {
                 up_prot.up(evt);
+                num_merge_events++;
             }
             catch(Throwable t) {
                 log.error("failed sending up MERGE event", t);
@@ -310,14 +316,14 @@ public class MERGE2 extends Protocol {
         /**
          * Returns a random value within [min_interval - max_interval]
          */
-        long computeInterval() {
+        protected long computeInterval() {
             return min_interval + Util.random(max_interval - min_interval);
         }
 
         /** Returns a list of PingData with only the view from members around the cluster */
         @SuppressWarnings("unchecked")
-        private List<PingData> findAllMembers() {
-            List<PingData> retval=(List<PingData>)down_prot.down(new Event(Event.FIND_ALL_MBRS));
+        protected List<PingData> findAllViews() {
+            List<PingData> retval=(List<PingData>)down_prot.down(new Event(Event.FIND_ALL_VIEWS));
             if(retval == null) return Collections.emptyList();
             if(is_coord && local_addr != null) {
                 PingData tmp=new PingData(local_addr, view, true);
@@ -356,7 +362,6 @@ public class MERGE2 extends Protocol {
             }
             return ret;
         }
-
 
     }
 }

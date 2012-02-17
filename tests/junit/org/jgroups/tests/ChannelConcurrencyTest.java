@@ -3,6 +3,7 @@ package org.jgroups.tests;
 import static java.util.concurrent.TimeUnit.SECONDS;
 
 import java.net.InetAddress;
+import java.sql.SQLOutput;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -12,9 +13,7 @@ import java.util.concurrent.TimeUnit;
 import org.jgroups.Channel;
 import org.jgroups.JChannel;
 import org.jgroups.Message;
-import org.jgroups.blocks.GroupRequest;
-import org.jgroups.blocks.MessageDispatcher;
-import org.jgroups.blocks.RequestHandler;
+import org.jgroups.blocks.*;
 import org.jgroups.protocols.MERGE2;
 import org.jgroups.protocols.MPING;
 import org.jgroups.protocols.pbcast.GMS;
@@ -70,7 +69,6 @@ public class ChannelConcurrencyTest  extends ChannelTestBase{
             // Wait for all channels to finish connecting
             successConnecting=latch.await(timeoutToConverge, TimeUnit.SECONDS);            
             if(successConnecting) {
-                log.info("All connected. Converging...");
                 for(Task t:tasks) {
                     Throwable ex=t.getException();
                     if(ex != null)
@@ -89,14 +87,12 @@ public class ChannelConcurrencyTest  extends ChannelTestBase{
                 }
 
                 final long duration=System.currentTimeMillis() - start;
-                log.info("Converged to a single group after " + duration
-                                   + " ms; group is:\n");
                 for(int i=0;i < channels.length;i++) {
-                    log.info("#" + (i + 1)
-                                       + ": "
-                                       + channels[i].getAddress()
-                                       + ": "
-                                       + channels[i].getView());
+                    System.out.println("#" + (i + 1)
+                                         + ": "
+                                         + channels[i].getAddress()
+                                         + ": "
+                                         + channels[i].getView());
                 }                
             }         
 
@@ -108,7 +104,6 @@ public class ChannelConcurrencyTest  extends ChannelTestBase{
         finally {
             Util.sleep(2500);
             executor.shutdownNow();
-            log.info("closing channels: ");            
             for(JChannel ch:channels) {
                 ch.close();                               
                 //there are sometimes big delays until entire cluster shuts down
@@ -180,8 +175,7 @@ public class ChannelConcurrencyTest  extends ChannelTestBase{
                     for(int i=0;i < 10;i++) {
                         final RspList rsp=md.castMessage(null,
                                                          new Message(null, null, i),
-                                                         GroupRequest.GET_ALL,
-                                                         2500);
+                                                         new RequestOptions(ResponseMode.GET_ALL, 2500));
                         for(Object o:rsp.getResults()) {
                             assertEquals("Wrong result received at " + c.getAddress(), i, o);
                         }
@@ -199,7 +193,7 @@ public class ChannelConcurrencyTest  extends ChannelTestBase{
     }
     private static class MyHandler implements RequestHandler {
 
-        public Object handle(Message msg) {
+        public Object handle(Message msg) throws Exception {
             return msg.getObject();
         }
 

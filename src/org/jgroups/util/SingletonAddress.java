@@ -9,9 +9,9 @@ import java.io.*;
  * @author Bela Ban
  */
 public class SingletonAddress implements Address {
-    protected final String cluster_name;
+    private static final long serialVersionUID = 7295848950180741550L;
+    protected final String  cluster_name;
     protected final Address addr;
-    private static final long serialVersionUID=-7139682546627602986L;
 
     public SingletonAddress(String cluster_name, Address addr) {
         this.cluster_name=cluster_name;
@@ -33,32 +33,23 @@ public class SingletonAddress implements Address {
         return cluster_name;
     }
 
-    public boolean isMulticastAddress() {
-        return false;
-    }
-
-    @Override
-    public boolean isGroupAddress() {
-        return false;
-    }
-
     public int size() {
         return 0;
-    }
-
-    public void writeExternal(ObjectOutput out) throws IOException {
-        throw new UnsupportedOperationException();
     }
 
     public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
         throw new UnsupportedOperationException();
     }
 
-    public void writeTo(DataOutputStream out) throws IOException {
+    public void writeExternal(ObjectOutput out) throws IOException {
         throw new UnsupportedOperationException();
     }
 
-    public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
+    public void writeTo(DataOutput out) throws Exception {
+        throw new UnsupportedOperationException();
+    }
+
+    public void readFrom(DataInput in) throws Exception {
         throw new UnsupportedOperationException();
     }
 

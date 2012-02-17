@@ -3,15 +3,14 @@ package org.jgroups.demos.wb;
 
 import org.jgroups.*;
 import org.jgroups.blocks.*;
-import org.jgroups.blocks.GroupRequest;
-import org.jgroups.blocks.RpcDispatcher;
 import org.jgroups.logging.Log;
 import org.jgroups.logging.LogFactory;
 
 import java.applet.Applet;
 import java.awt.*;
 import java.awt.event.*;
-
+import java.io.InputStream;
+import java.io.OutputStream;
 
 
 /**
@@ -20,8 +19,7 @@ import java.awt.event.*;
  * be sent to specific or all members. Whiteboard is both an application and an applet.
  * @author Bela Ban
  */
-public class Whiteboard extends Applet implements ActionListener, MessageListener, MembershipListener,
-						  ComponentListener, FocusListener {
+public class Whiteboard extends Applet implements MessageListener, MembershipListener, ActionListener, ComponentListener, FocusListener {
     public RpcDispatcher           disp;
     Channel                        channel;
     GraphPanel                     panel;
@@ -38,15 +36,15 @@ public class Whiteboard extends Applet implements ActionListener, MessageListene
         ;
     }
 
-    public byte[] getState() {
-        panel.saveState();
-        return panel.getState();
+    
+
+    public void getState(OutputStream ostream) throws Exception {
+        panel.getState(ostream);
     }
 
-    public void setState(byte[] new_state) {
-        panel.setState(new_state);
+    public void setState(InputStream istream) throws Exception {
+        panel.setState(istream);
     }
-
 
     private String getInfo() {
         StringBuilder ret = new StringBuilder();
@@ -125,8 +123,8 @@ public class Whiteboard extends Applet implements ActionListener, MessageListene
     public void destroy() {
         if (disp != null) {
             try {
-				MethodCall call = new MethodCall("removeNode", new Object[] {panel.my_addr}, new String[] {Object.class.getName()}); 
-                disp.callRemoteMethods(null, call, GroupRequest.GET_ALL, 0);
+				MethodCall call = new MethodCall("removeNode", new Object[] {panel.my_addr}, new Class[] {Object.class});
+                disp.callRemoteMethods(null, call, new RequestOptions(ResponseMode.GET_ALL, 5000));
             } catch (Exception e) {
                 log.error(e.toString());
             }
@@ -181,6 +179,8 @@ public class Whiteboard extends Applet implements ActionListener, MessageListene
     public void block() {
     }
 
+    public void unblock() {
+    }
 
     public void moveNode(Node n) {
         panel.moveNode(n);

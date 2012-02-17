@@ -12,14 +12,8 @@ import java.security.SecureRandom;
  * @author Bela Ban
  */
 public class AdditionalDataUUID extends UUID {
-    private static final long serialVersionUID=-8299077012964139735L;
-
-    // don't need this as we already added AdditonalDataUUID to jg-magic-map.xml
-    //    static {
-    //        ClassConfigurator.add((short)3333, PayloadUUID.class);
-    //    }
-
-    protected byte[] payload;
+    private static final long serialVersionUID = 4583682459482601554L;
+    protected byte[]          payload;
 
     public AdditionalDataUUID() {
     }
@@ -57,34 +51,36 @@ public class AdditionalDataUUID extends UUID {
         return retval;
     }
 
-    public void writeTo(DataOutputStream out) throws IOException {
-        super.writeTo(out);
-        Util.writeByteBuffer(payload, out);
-    }
-
-    public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
-        super.readFrom(in);
-        payload=Util.readByteBuffer(in);
-    }
-
     public void writeExternal(ObjectOutput out) throws IOException {
         super.writeExternal(out);
-        if(payload != null) {
-            out.writeInt(payload.length);
-            out.write(payload, 0, payload.length);
+        try {
+            Util.writeByteBuffer(payload, out);
         }
-        else
-            out.writeInt(0);
+        catch(Exception e) {
+            throw new IOException(e);
+        }
     }
 
     public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
         super.readExternal(in);
-        int size=in.readInt();
-        if(size > 0) {
-            payload=new byte[size];
-            in.read(payload, 0, size);
+        try {
+            payload=Util.readByteBuffer(in);
+        }
+        catch(Exception e) {
+            throw new IOException(e);
         }
     }
+
+    public void writeTo(DataOutput out) throws Exception {
+        super.writeTo(out);
+        Util.writeByteBuffer(payload, out);
+    }
+
+    public void readFrom(DataInput in) throws Exception {
+        super.readFrom(in);
+        payload=Util.readByteBuffer(in);
+    }
+
 
     public String toString() {
         if(print_uuids)

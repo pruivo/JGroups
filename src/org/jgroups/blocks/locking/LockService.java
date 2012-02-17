@@ -1,15 +1,14 @@
 package org.jgroups.blocks.locking;
 
+import org.jgroups.Event;
+import org.jgroups.JChannel;
+import org.jgroups.protocols.Locking;
+
 import java.util.Date;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
-
-import org.jgroups.Event;
-import org.jgroups.JChannel;
-import org.jgroups.annotations.Experimental;
-import org.jgroups.protocols.Locking;
 
 /**
  * LockService is the main class for to use for distributed locking functionality. LockService needs access to a
@@ -34,7 +33,6 @@ import org.jgroups.protocols.Locking;
  * @author Bela Ban
  * @since 2.12
  */
-@Experimental
 public class LockService {
     protected JChannel ch;
     protected Locking lock_prot;
@@ -101,7 +99,7 @@ public class LockService {
         }
 
         public boolean tryLock() {
-            Boolean retval=(Boolean)ch.downcall(new Event(Event.LOCK, new LockInfo(name, true, false, false, 0, TimeUnit.MILLISECONDS)));
+            Boolean retval=(Boolean)ch.down(new Event(Event.LOCK, new LockInfo(name, true, false, false, 0, TimeUnit.MILLISECONDS)));
             if (retval == Boolean.TRUE) {
                 holder.set(Thread.currentThread());
             }
@@ -109,7 +107,7 @@ public class LockService {
         }
 
         public boolean tryLock(long time, TimeUnit unit) throws InterruptedException {
-            Boolean retval=(Boolean)ch.downcall(new Event(Event.LOCK, new LockInfo(name, true, true, true, time, unit)));
+            Boolean retval=(Boolean)ch.down(new Event(Event.LOCK, new LockInfo(name, true, true, true, time, unit)));
             if(Thread.currentThread().isInterrupted())
                 throw new InterruptedException();
             if (retval == Boolean.TRUE) {
@@ -158,7 +156,7 @@ public class LockService {
 
         @Override
         public long awaitNanos(long nanosTimeout) throws InterruptedException {
-            Long waitLeft = (Long)ch.downcall(new Event(Event.LOCK_AWAIT, 
+            Long waitLeft = (Long)ch.down(new Event(Event.LOCK_AWAIT,
                 new LockInfo(name, false, true, true, nanosTimeout, 
                     TimeUnit.NANOSECONDS)));
             if(Thread.currentThread().isInterrupted())

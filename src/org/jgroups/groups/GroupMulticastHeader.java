@@ -5,9 +5,7 @@ import org.jgroups.Global;
 import org.jgroups.Header;
 import org.jgroups.util.Util;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
+import java.io.*;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Set;
@@ -110,44 +108,12 @@ public class GroupMulticastHeader extends Header {
 
     @Override
     public int size() {
-        return Global.LONG_SIZE + Global.BYTE_SIZE + Global.LONG_SIZE + Global.INT_SIZE +
-                (group != null ? group.size() : 0) +
-                (origin != null ? origin.size() : 0);
-    }
-
-    @Override
-    public void writeTo(DataOutputStream out) throws IOException {
-        out.writeLong(timestamp);
-        out.writeLong(seqNo);
-        out.writeByte(flags);
-        Util.writeAddress(origin, out);
-        if(messageID == null) {
-            out.writeLong(-1);
-        } else {
-            out.writeLong(messageID.getId());
+        int size = Util.size(timestamp) + Global.BYTE_SIZE + Util.size(messageID.getId()) + Global.INT_SIZE +
+                Util.size(origin);
+        for (Address address : group) {
+            size += Util.size(address);
         }
-        out.writeInt(group.size());
-        for(Address addr : group) {
-            Util.writeAddress(addr, out);
-        }
-    }
-
-    @Override
-    public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
-        timestamp = in.readLong();
-        seqNo = in.readLong();
-        flags = in.readByte();
-        origin = Util.readAddress(in);
-        long id = in.readLong();
-        if(id == -1) {
-            messageID = null;
-        } else {
-            messageID = new MessageID(origin, id);
-        }
-        int size = in.readInt();
-        for(int i = 0; i < size; ++i) {
-            group.add(Util.readAddress(in));
-        }
+        return size;
     }
 
     @Override
@@ -180,6 +146,30 @@ public class GroupMulticastHeader extends Header {
             case MESSAGE_WITH_PROPOSE: return "MESSAGE_WITH_PROPOSE";
             case PROPOSE: return "PROPOSE";
             default: return "UNKNOWN_TYPE";
+        }
+    }
+
+    @Override
+    public void writeTo(DataOutput out) throws Exception {
+        Util.writeLong(timestamp, out);
+        out.writeByte(flags);
+        Util.writeAddress(origin, out);
+        Util.writeLong(messageID.getId(), out);
+        out.writeInt(group.size());
+        for(Address address : group) {
+            Util.writeAddress(address, out);
+        }
+    }
+
+    @Override
+    public void readFrom(DataInput in) throws Exception {
+        timestamp = Util.readLong(in);
+        flags = in.readByte();
+        origin = Util.readAddress(in);
+        long id = Util.readLong(in);
+        messageID = new MessageID(origin, id);
+        for (int i = in.readInt(); i > 0; --i) {
+            group.add(Util.readAddress(in));
         }
     }
 }

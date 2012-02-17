@@ -2,11 +2,11 @@
 package org.jgroups.util;
 
 
-import java.io.*;
+import java.io.DataInput;
+import java.io.DataOutput;
 
 
-
-public class Range implements Externalizable, Streamable, Comparable<Range> {
+public class Range implements Streamable, Comparable<Range> {
     public long low=-1;  // first msg to be retransmitted
     public long high=-1; // last msg to be retransmitted
 
@@ -41,26 +41,20 @@ public class Range implements Externalizable, Streamable, Comparable<Range> {
         return compareTo(other) == 0;
     }
 
-    public void writeExternal(ObjectOutput out) throws IOException {
-        out.writeLong(low);
-        out.writeLong(high);
+
+
+    public void writeTo(DataOutput out) throws Exception {
+        Util.writeLongSequence(low, high, out);
     }
 
-
-    public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
-        low=in.readLong();
-        high=in.readLong();
+    public void readFrom(DataInput in) throws Exception {
+        long[] seqnos=Util.readLongSequence(in);
+        low=seqnos[0];
+        high=seqnos[1];
     }
 
-
-    public void writeTo(DataOutputStream out) throws IOException {
-        out.writeLong(low);
-        out.writeLong(high);
-    }
-
-    public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
-        low=in.readLong();
-        high=in.readLong();
+    public int serializedSize() {
+        return Util.size(low, high);
     }
 
 

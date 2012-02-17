@@ -1,7 +1,6 @@
 package org.jgroups.groups;
 
 import org.jgroups.Address;
-import org.jgroups.Global;
 import org.jgroups.util.Streamable;
 import org.jgroups.util.Util;
 
@@ -14,19 +13,18 @@ import java.io.*;
  * equals to ViewId
  */
 public class MessageID implements Externalizable, Comparable, Cloneable, Streamable {
-    private Address addr = null;
+    private Address address = null;
     private long id = 0;
 
-    public MessageID() {
-    }
+    public MessageID() {}
 
-    public MessageID(Address addr, long id) {
-        this.addr = addr;
+    public MessageID(Address address, long id) {
+        this.address = address;
         this.id = id;
     }
 
-    public MessageID(Address addr) {
-        this.addr = addr;
+    public MessageID(Address address) {
+        this.address = address;
     }
 
     public void setID(long id) {
@@ -49,7 +47,7 @@ public class MessageID implements Externalizable, Comparable, Cloneable, Streama
             return 1;
         }
 
-        return this.addr.compareTo(otherID.addr);
+        return this.address.compareTo(otherID.address);
     }
 
     public MessageID copy() {
@@ -61,16 +59,16 @@ public class MessageID implements Externalizable, Comparable, Cloneable, Streama
     }
 
     public Address getAddress() {
-        return addr;
+        return address;
     }
 
     @Override
     public String toString() {
-        return "[MessageID:" + addr + ":" + id + ']';
+        return "MessageID{" + address + ":" + id + "}";
     }
 
     public Object clone() {
-        return new MessageID(addr, id);
+        return new MessageID(address, id);
     }
 
     public int compare(Object o) {
@@ -79,7 +77,7 @@ public class MessageID implements Externalizable, Comparable, Cloneable, Streama
 
 
     public boolean equals(Object other) {
-        return compareTo(other) == 0;
+        return (other instanceof MessageID) && compareTo(other) == 0;
     }
 
 
@@ -88,30 +86,37 @@ public class MessageID implements Externalizable, Comparable, Cloneable, Streama
     }
 
 
-    public void writeExternal(ObjectOutput out) throws IOException {
-        out.writeObject(addr);
-        out.writeLong(id);
-    }
-
-
-    public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
-        addr=(Address)in.readObject();
-        id=in.readLong();
-    }
-
-    public void writeTo(DataOutputStream out) throws IOException {
-        Util.writeAddress(addr, out);
-        out.writeLong(id);
-    }
-
-    public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
-        addr=Util.readAddress(in);
-        id=in.readLong();
-    }
-
     public int serializedSize() {
-        int retval= Global.LONG_SIZE; // for the id
-        retval+=Util.size(addr);
-        return retval;
+        return Util.size(id) + Util.size(address);
+    }
+
+    @Override
+    public void writeTo(DataOutput out) throws Exception {
+        Util.writeAddress(address, out);
+        Util.writeLong(id, out);
+    }
+
+    @Override
+    public void readFrom(DataInput in) throws Exception {
+        address = Util.readAddress(in);
+        id = Util.readLong(in);
+    }
+
+    @Override
+    public void writeExternal(ObjectOutput objectOutput) throws IOException {
+        try {
+            writeTo(objectOutput);
+        } catch (Exception e) {
+            throw new IOException(e);
+        }
+    }
+
+    @Override
+    public void readExternal(ObjectInput objectInput) throws IOException, ClassNotFoundException {
+        try {
+            readFrom(objectInput);
+        } catch (Exception e) {
+            throw new IOException(e);
+        }
     }
 }

@@ -77,12 +77,12 @@ public class NakAckHeader extends Header {
     }
 
 
-    public void writeTo(DataOutputStream out) throws IOException {
+    public void writeTo(DataOutput out) throws Exception {
         out.writeByte(type);
         switch(type) {
             case MSG:
             case XMIT_RSP:
-                out.writeLong(seqno);
+                Util.writeLong(seqno, out);
                 break;
             case XMIT_REQ:
                 Util.writeStreamable(range, out);
@@ -91,12 +91,12 @@ public class NakAckHeader extends Header {
         }
     }
 
-    public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
+    public void readFrom(DataInput in) throws Exception {
         type=in.readByte();
         switch(type) {
             case MSG:
             case XMIT_RSP:
-                seqno=in.readLong();
+                seqno=Util.readLong(in);
                 break;
             case XMIT_REQ:
                 range=(Range)Util.readStreamable(Range.class, in);
@@ -111,12 +111,12 @@ public class NakAckHeader extends Header {
         switch(type) {
             case MSG:
             case XMIT_RSP:
-                return retval + Global.LONG_SIZE; // seqno
+                return retval + Util.size(seqno);
 
             case XMIT_REQ:
                 retval+=Global.BYTE_SIZE; // presence for range
                 if(range != null)
-                    retval+=2 * Global.LONG_SIZE; // 2 times 8 bytes for seqno
+                    retval+=range.serializedSize();
                 retval+=Util.size(sender);
                 return retval;
         }

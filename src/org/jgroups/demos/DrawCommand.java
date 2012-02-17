@@ -3,9 +3,8 @@ package org.jgroups.demos;
 
 import org.jgroups.util.Streamable;
 
-import java.io.DataOutputStream;
-import java.io.IOException;
-import java.io.DataInputStream;
+import java.io.DataInput;
+import java.io.DataOutput;
 
 /**
  * Encapsulates information about a draw command.
@@ -39,7 +38,7 @@ public class DrawCommand implements Streamable {
     }
 
 
-    public void writeTo(DataOutputStream out) throws IOException {
+    public void writeTo(DataOutput out) throws Exception {
         out.writeByte(mode);
         out.writeInt(x);
         out.writeInt(y);
@@ -48,7 +47,7 @@ public class DrawCommand implements Streamable {
         out.writeInt(b);
     }
 
-    public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
+    public void readFrom(DataInput in) throws Exception {
         mode=in.readByte();
         x=in.readInt();
         y=in.readInt();

@@ -162,7 +162,7 @@ public class GROUP_MULTICAST3 extends Protocol {
             case Event.MSG:
                 Message msg=(Message)evt.getArg();
                 Address addr = msg.getDest();
-                if(addr != null && addr.isGroupAddress()) {
+                if(addr != null && addr instanceof GroupAddress) {
                     Set<Address> destination = ((GroupAddress)addr).getAddresses();
 
                     GroupMulticastHeader hdr = new GroupMulticastHeader(local_addr, message_id.incrementAndGet());

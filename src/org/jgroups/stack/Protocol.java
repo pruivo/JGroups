@@ -4,10 +4,9 @@ package org.jgroups.stack;
 
 
 import org.jgroups.Event;
-import org.jgroups.conf.ClassConfigurator;
-import org.jgroups.annotations.DeprecatedProperty;
 import org.jgroups.annotations.ManagedAttribute;
 import org.jgroups.annotations.Property;
+import org.jgroups.conf.ClassConfigurator;
 import org.jgroups.jmx.ResourceDMBean;
 import org.jgroups.logging.Log;
 import org.jgroups.logging.LogFactory;
@@ -39,7 +38,6 @@ import java.util.*;
  *
  * @author Bela Ban
  */
-@DeprecatedProperty(names={"down_thread","down_thread_prio","up_thread","up_thread_prio"})
 public abstract class Protocol {
     protected Protocol         up_prot=null, down_prot=null;
     protected ProtocolStack    stack=null;
@@ -53,12 +51,11 @@ public abstract class Protocol {
     /** The name of the protocol. Is by default set to the protocol's classname. This property should rarely need to
      * be set, e.g. only in cases where we want to create more than 1 protocol of the same class in the same stack */
     @Property(name="name",description="Give the protocol a different name if needed so we can have multiple " +
-            "instances of it in the same stack (deprecated)",writable=false)
-    @Deprecated
+            "instances of it in the same stack (also change ID)",writable=false)
     protected String           name=getClass().getSimpleName();
 
     @Property(description="Give the protocol a different ID if needed so we can have multiple " +
-            "instances of it in the same stack",writable=true)
+            "instances of it in the same stack",writable=false)
     protected short            id=ClassConfigurator.getProtocolId(getClass());
 
     protected final Log        log=LogFactory.getLog(this.getClass());
@@ -88,36 +85,6 @@ public abstract class Protocol {
         this.ergonomics=ergonomics;
     }
 
-    /**
-     * Configures the protocol initially. A configuration string consists of name=value
-     * items, separated by a ';' (semicolon), e.g.:<pre>
-     * "loopback=false;unicast_inport=4444"
-     * </pre>
-     * @deprecated The properties are now set through the @Property annotation on the attribute or setter
-     */
-    protected boolean setProperties(Properties props) {
-        throw new UnsupportedOperationException("deprecated; use a setter instead");
-    }
-
-
-    /**
-     * Sets a property
-     * @param key
-     * @param val
-     * @deprecated Use the corresponding setter instead
-     */
-    public void setProperty(String key, String val) {
-        throw new UnsupportedOperationException("deprecated; use a setter instead");
-    }
-
-
-    /** Called by Configurator. Removes 2 properties which are used by the Protocol directly and then
-     *	calls setProperties(), which might invoke the setProperties() method of the actual protocol instance.
-     * @deprecated Use a setter instead
-     */
-    public boolean setPropertiesInternal(Properties props) {
-        throw new UnsupportedOperationException("use a setter instead");
-    }
 
     public Object getValue(String name) {
         if(name == null) return null;
@@ -153,16 +120,7 @@ public abstract class Protocol {
     }
 
 
-    /**
-     * @return
-     * @deprecated Use a getter to get the actual instance variable
-     */
-    public Properties getProperties() {
-        if(log.isWarnEnabled())
-            log.warn("deprecated feature: please use a setter instead");
-        return new Properties();
-    }
-    
+
     public ProtocolStack getProtocolStack(){
         return stack;
     }
@@ -212,20 +170,6 @@ public abstract class Protocol {
             down_prot.setSocketFactory(factory);
     }
 
-    /** @deprecated up_thread was removed
-     * @return false by default
-     */
-    public boolean upThreadEnabled() {
-        return false;
-    }
-
-    /**
-     * @deprecated down thread was removed
-     * @return boolean False by default
-     */
-    public boolean downThreadEnabled() {
-        return false;
-    }
 
     public boolean statsEnabled() {
         return stats;
@@ -342,34 +286,34 @@ public abstract class Protocol {
 
     /** List of events that are required to be answered by some layer above.
      @return Vector (of Integers) */
-    public Vector<Integer> requiredUpServices() {
+    public List<Integer> requiredUpServices() {
         return null;
     }
 
     /** List of events that are required to be answered by some layer below.
      @return Vector (of Integers) */
-    public Vector<Integer> requiredDownServices() {
+    public List<Integer> requiredDownServices() {
         return null;
     }
 
     /** List of events that are provided to layers above (they will be handled when sent down from
      above).
      @return Vector (of Integers) */
-    public Vector<Integer> providedUpServices() {
+    public List<Integer> providedUpServices() {
         return null;
     }
 
     /** List of events that are provided to layers below (they will be handled when sent down from
      below).
      @return Vector<Integer (of Integers) */
-    public Vector<Integer> providedDownServices() {
+    public List<Integer> providedDownServices() {
         return null;
     }
 
 
     /** All protocol names have to be unique ! */
     public String getName() {
-        return getClass().getSimpleName();
+        return name;
     }
 
     public short getId() {

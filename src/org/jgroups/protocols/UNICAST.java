@@ -12,11 +12,12 @@ import org.jgroups.util.TimeScheduler;
 import org.jgroups.util.Tuple;
 import org.jgroups.util.Util;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
+import java.io.DataInput;
+import java.io.DataOutput;
 import java.util.*;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -41,7 +42,6 @@ import java.util.concurrent.locks.ReentrantLock;
  * @author Bela Ban
  */
 @MBean(description="Reliable unicast layer")
-@DeprecatedProperty(names={"immediate_ack", "use_gms", "enabled_mbrs_timeout", "eager_lock_release"})
 public class UNICAST extends Protocol implements AckSenderWindow.RetransmitCommand, AgeOutCache.Handler<Address> {
     public static final long DEFAULT_FIRST_SEQNO=Global.DEFAULT_FIRST_UNICAST_SEQNO;
 
@@ -49,18 +49,18 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
     /* ------------------------------------------ Properties  ------------------------------------------ */
 
 
-    @Property(description="Whether to loop back messages sent to self. Default is false",
-              deprecatedMessage="might get removed soon as it can destroy ordering. " +
-                      "See https://jira.jboss.org/jira/browse/JGRP-1092 for details")
-    @Deprecated
-    private boolean loopback=false;
-
-
-    private long[] timeout= { 400, 800, 1600, 3200 }; // for AckSenderWindow: max time to wait for missing acks
+    private int[] timeout= { 400, 800, 1600, 3200 }; // for AckSenderWindow: max time to wait for missing acks
 
     @Property(description="Max number of messages to be removed from the AckReceiverWindow. This property might " +
             "get removed anytime, so don't use it !")
     private int max_msg_batch_size=50000;
+
+    @Property(description="Time (in milliseconds) after which an idle incoming or outgoing connection is closed. The " +
+      "connection will get re-established when used again. 0 disables connection reaping")
+    protected long conn_expiry_timeout=60000;
+
+    @Property(description="Size (in bytes) of a Segment in the segments table. Only for experts, do not use !")
+    protected int segment_capacity=1000;
 
     /* --------------------------------------------- JMX  ---------------------------------------------- */
 
@@ -75,7 +75,9 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
     private final ConcurrentMap<Address, SenderEntry>   send_table=Util.createConcurrentMap();
     private final ConcurrentMap<Address, ReceiverEntry> recv_table=Util.createConcurrentMap();
 
-    private final Vector<Address> members=new Vector<Address>(11);
+    protected final ReentrantLock recv_table_lock=new ReentrantLock();
+
+    private final List<Address> members=new ArrayList<Address>(11);
 
     private Address local_addr=null;
 
@@ -92,16 +94,13 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
 
     private AgeOutCache<Address> cache=null;
 
+    protected Future<?> connection_reaper; // closes idle connections
 
-    @Deprecated @ManagedAttribute
-    public static int getUndeliveredMessages() {
-        return 0;
-    }
 
-    public long[] getTimeout() {return timeout;}
+    public int[] getTimeout() {return timeout;}
 
-    @Property(name="timeout",converter=PropertyConverters.LongArray.class)
-    public void setTimeout(long[] val) {
+    @Property(name="timeout",converter=PropertyConverters.IntegerArray.class)
+    public void setTimeout(int[] val) {
         if(val != null)
             timeout=val;
     }
@@ -114,8 +113,29 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
     @ManagedAttribute
     public String getLocalAddress() {return local_addr != null? local_addr.toString() : "null";}
     @ManagedAttribute
-    public String getMembers() {return members != null? members.toString() : "[]";}
+    public String getMembers() {
+        synchronized(members) {
+            return members.toString();
+        }
+    }
 
+    @ManagedAttribute(description="Whether the ConnectionReaper task is running")
+    public boolean isConnectionReaperRunning() {return connection_reaper != null && !connection_reaper.isDone();}
+
+    @ManagedAttribute(description="Returns the number of outgoing (send) connections")
+    public int getNumSendConnections() {
+        return send_table.size();
+    }
+
+    @ManagedAttribute(description="Returns the number of incoming (receive) connections")
+    public int getNumReceiveConnections() {
+        return recv_table.size();
+    }
+
+    @ManagedAttribute(description="Returns the total number of outgoing (send) and incoming (receive) connections")
+    public int getNumConnections() {
+        return getNumReceiveConnections() + getNumSendConnections();
+    }
 
     @ManagedOperation
     public String printConnections() {
@@ -261,10 +281,13 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
         if(max_retransmit_time > 0)
             cache=new AgeOutCache<Address>(timer, max_retransmit_time, this);
         started=true;
+        if(conn_expiry_timeout > 0)
+            startConnectionReaper();
     }
 
     public void stop() {
         started=false;
+        stopConnectionReaper();
         removeAllConnections();
     }
 
@@ -280,7 +303,7 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
                 msg=(Message)evt.getArg();
                 dst=msg.getDest();
 
-                if(dst == null || dst.isMulticastAddress() || msg.isFlagSet(Message.NO_RELIABILITY))  // only handle unicast messages
+                if(dst == null || msg.isFlagSet(Message.NO_RELIABILITY))  // only handle unicast messages
                     break;  // pass up
 
                 // changed from removeHeader(): we cannot remove the header because if we do loopback=true at the
@@ -319,7 +342,7 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
                 Address dst=msg.getDest();
 
                 /* only handle unicast messages */
-                if (dst == null || dst.isMulticastAddress() || msg.isFlagSet(Message.NO_RELIABILITY))
+                if (dst == null || msg.isFlagSet(Message.NO_RELIABILITY))
                     break;
 
                 if(!started) {
@@ -363,6 +386,7 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
                     // entry.sent_msgs.add(seqno, msg);  // add *including* UnicastHeader, adds to retransmitter
                     entry.sent_msgs.addToMessages(seqno, msg);  // add *including* UnicastHeader, adds to retransmitter
                     entry.sent_msgs_seqno++;
+                    entry.update();
                 }
                 finally {
                     entry.unlock();
@@ -371,7 +395,7 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
                 long sleep_time=100;
                 for(int i=1; i <= 10; i++) {
                     try {
-                        entry.sent_msgs.addToRetransmitter(seqno, msg);  // adds to retransmitter
+                        entry.sent_msgs.addToRetransmitter(seqno);  // adds to retransmitter
                         break;
                     }
                     catch(Throwable t) {
@@ -405,7 +429,7 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
 
             case Event.VIEW_CHANGE:  // remove connections to peers that are not members anymore !
                 View view=(View)evt.getArg();
-                Vector<Address> new_members=view.getMembers();
+                List<Address> new_members=view.getMembers();
                 Set<Address> non_members=new HashSet<Address>(send_table.keySet());
                 non_members.addAll(recv_table.keySet());
 
@@ -456,14 +480,22 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
      * used ! 
      */
     public void removeConnection(Address mbr) {
+        removeSendConnection(mbr);
+        removeReceiveConnection(mbr);
+    }
+
+    public void removeSendConnection(Address mbr) {
         SenderEntry entry=send_table.remove(mbr);
         if(entry != null)
             entry.reset();
+    }
 
+    public void removeReceiveConnection(Address mbr) {
         ReceiverEntry entry2=recv_table.remove(mbr);
         if(entry2 != null)
             entry2.reset();
     }
+
 
     /**
      * This method is public only so it can be invoked by unit testing, but should not otherwise be used !
@@ -485,7 +517,7 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
     public void retransmit(long seqno, Message msg) {
         if(log.isTraceEnabled())
             log.trace(local_addr + " --> XMIT(" + msg.getDest() + ": #" + seqno + ')');
-        down_prot.down(new Event(Event.MSG, msg));
+        down_prot.down(new Event(Event.MSG,msg));
         num_xmits++;
     }
 
@@ -509,7 +541,7 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
      * e.received_msgs is null and <code>first</code> is true: create a new AckReceiverWindow(seqno) and
      * add message. Set e.received_msgs to the new window. Else just add the message.
      */
-    private void handleDataReceived(Address sender, long seqno, long conn_id,  boolean first, Message msg, Event evt) {
+    protected void handleDataReceived(Address sender, long seqno, long conn_id,  boolean first, Message msg, Event evt) {
         if(log.isTraceEnabled()) {
             StringBuilder sb=new StringBuilder();
             sb.append(local_addr).append(" <-- DATA(").append(sender).append(": #").append(seqno);
@@ -519,38 +551,49 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
             log.trace(sb);
         }
 
-        ReceiverEntry entry=recv_table.get(sender);
-        AckReceiverWindow win=entry != null? entry.received_msgs : null;
+        AckReceiverWindow win;
+        ReceiverEntry entry;
 
-        if(first) {
-            if(entry == null) {
-                entry=getOrCreateReceiverEntry(sender, seqno, conn_id);
-                win=entry.received_msgs;
-            }
-            else {  // entry != null && win != null
-                if(conn_id != entry.recv_conn_id) {
-                    if(log.isTraceEnabled())
-                        log.trace(local_addr + ": conn_id=" + conn_id + " != " + entry.recv_conn_id + "; resetting receiver window");
-
-                    ReceiverEntry entry2=recv_table.remove(sender);
-                    if(entry2 != null)
-                        entry2.received_msgs.reset();
-                    
+        recv_table_lock.lock();
+        try {
+            entry=recv_table.get(sender);
+            win=entry != null? entry.received_msgs : null;
+            if(first) {
+                if(entry == null) {
                     entry=getOrCreateReceiverEntry(sender, seqno, conn_id);
                     win=entry.received_msgs;
                 }
-                else {
-                    ;
+                else {  // entry != null && win != null
+                    if(conn_id != entry.recv_conn_id) {
+                        if(log.isTraceEnabled())
+                            log.trace(local_addr + ": conn_id=" + conn_id + " != " + entry.recv_conn_id + "; resetting receiver window");
+
+                        ReceiverEntry entry2=recv_table.remove(sender);
+                        if(entry2 != null)
+                            entry2.received_msgs.reset();
+                    
+                        entry=getOrCreateReceiverEntry(sender, seqno, conn_id);
+                        win=entry.received_msgs;
+                    }
+                    else {
+                        ;
+                    }
+                }
+            }
+            else { // entry == null && win == null OR entry != null && win == null OR entry != null && win != null
+                if(win == null || entry.recv_conn_id != conn_id) {
+                    recv_table_lock.unlock();
+                    sendRequestForFirstSeqno(sender); // drops the message and returns (see below)
+                    return;
                 }
             }
         }
-        else { // entry == null && win == null OR entry != null && win == null OR entry != null && win != null
-            if(win == null || entry.recv_conn_id != conn_id) {
-                sendRequestForFirstSeqno(sender); // drops the message and returns (see below)
-                return;
-            }
+        finally {
+            if(recv_table_lock.isHeldByCurrentThread())
+                recv_table_lock.unlock();
         }
 
+        entry.update();
         byte result=win.add2(seqno, msg); // win is guaranteed to be non-null if we get here
         boolean added=result > 0;
         num_msgs_received++;
@@ -625,7 +668,7 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
 
 
     private ReceiverEntry getOrCreateReceiverEntry(Address sender, long seqno, long conn_id) {
-        ReceiverEntry entry=new ReceiverEntry(new AckReceiverWindow(seqno), conn_id);
+        ReceiverEntry entry=new ReceiverEntry(new AckReceiverWindow(seqno, segment_capacity), conn_id);
         ReceiverEntry entry2=recv_table.putIfAbsent(sender, entry);
         if(entry2 != null)
             return entry2;
@@ -712,7 +755,15 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
         }
     }
 
+    protected synchronized void startConnectionReaper() {
+        if(connection_reaper == null || connection_reaper.isDone())
+            connection_reaper=timer.scheduleWithFixedDelay(new ConnectionReaper(), conn_expiry_timeout, conn_expiry_timeout, TimeUnit.MILLISECONDS);
+    }
 
+    protected synchronized void stopConnectionReaper() {
+        if(connection_reaper != null)
+            connection_reaper.cancel(false);
+    }
    
     private short getNewConnectionId() {
         synchronized(this) {
@@ -733,6 +784,33 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
         if(log.isTraceEnabled())
             log.trace(local_addr + " --> SEND_FIRST_SEQNO(" + dest + ")");
         down_prot.down(new Event(Event.MSG, msg));
+    }
+
+    @ManagedOperation(description="Closes connections that have been idle for more than conn_expiry_timeout ms")
+    public void reapIdleConnections() {
+        // remove expired connections from send_table
+        for(Map.Entry<Address,SenderEntry> entry: send_table.entrySet()) {
+            SenderEntry val=entry.getValue();
+            long age=val.age();
+            if(age >= conn_expiry_timeout) {
+                removeSendConnection(entry.getKey());
+                if(log.isDebugEnabled())
+                    log.debug(local_addr + ": removed expired connection for " + entry.getKey() +
+                                " (" + age + " ms old) from send_table");
+            }
+        }
+
+        // remove expired connections from recv_table
+        for(Map.Entry<Address,ReceiverEntry> entry: recv_table.entrySet()) {
+            ReceiverEntry val=entry.getValue();
+            long age=val.age();
+            if(age >= conn_expiry_timeout) {
+                removeReceiveConnection(entry.getKey());
+                if(log.isDebugEnabled())
+                    log.debug(local_addr + ": removed expired connection for " + entry.getKey() +
+                                " (" + age + " ms old) from recv_table");
+            }
+        }
     }
 
 
@@ -803,15 +881,20 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
         }
 
         public final int size() {
+            int retval=Global.BYTE_SIZE;     // type
             switch(type) {
                 case DATA:
-                    return Global.BYTE_SIZE *2 + Global.LONG_SIZE + Global.SHORT_SIZE;
+                    retval+=Util.size(seqno) // seqno
+                      + Global.SHORT_SIZE    // conn_id
+                      + Global.BYTE_SIZE;    // first
+                    break;
                 case ACK:
-                    return Global.BYTE_SIZE + Global.LONG_SIZE;
+                    retval+=Util.size(seqno); // seqno
+                    break;
                 case SEND_FIRST_SEQNO:
-                    return Global.BYTE_SIZE;
+                    break;
             }
-            return 0;
+            return retval;
         }
 
         public UnicastHeader copy() {
@@ -819,32 +902,32 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
         }
 
 
-        public void writeTo(DataOutputStream out) throws IOException {
+        public void writeTo(DataOutput out) throws Exception {
             out.writeByte(type);
             switch(type) {
                 case DATA:
-                    out.writeLong(seqno);
+                    Util.writeLong(seqno, out);
                     out.writeShort(conn_id);
                     out.writeBoolean(first);
                     break;
                 case ACK:
-                    out.writeLong(seqno);
+                    Util.writeLong(seqno, out);
                     break;
                 case SEND_FIRST_SEQNO:
                     break;
             }
         }
 
-        public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
+        public void readFrom(DataInput in) throws Exception {
             type=in.readByte();
             switch(type) {
                 case DATA:
-                    seqno=in.readLong();
+                    seqno=Util.readLong(in);
                     conn_id=in.readShort();
                     first=in.readBoolean();
                     break;
                 case ACK:
-                    seqno=in.readLong();
+                    seqno=Util.readLong(in);
                     break;
                 case SEND_FIRST_SEQNO:
                     break;
@@ -859,12 +942,14 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
         final AckSenderWindow   sent_msgs;
         long                    sent_msgs_seqno=DEFAULT_FIRST_SEQNO;   // seqno for msgs sent by us
         final short             send_conn_id;
+        private long            timestamp;
         final Lock              lock=new ReentrantLock();
 
-        public SenderEntry(short send_conn_id, AckSenderWindow.RetransmitCommand cmd, long[] timeout,
+        public SenderEntry(short send_conn_id, AckSenderWindow.RetransmitCommand cmd, int[] timeout,
                            TimeScheduler timer, Address local_addr) {
             this.send_conn_id=send_conn_id;
             sent_msgs=new AckSenderWindow(cmd, new StaticInterval(timeout), timer, local_addr);
+            update();
         }
 
         public void lock() {
@@ -881,11 +966,15 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
             sent_msgs_seqno=DEFAULT_FIRST_SEQNO;
         }
 
+        void update() {timestamp=System.currentTimeMillis();}
+        long age() {return System.currentTimeMillis() - timestamp;}
+
         public String toString() {
             StringBuilder sb=new StringBuilder();
             if(sent_msgs != null)
                 sb.append(sent_msgs).append(", ");
             sb.append("send_conn_id=" + send_conn_id);
+            sb.append(" (" + age() + " ms old)");
             return sb.toString();
         }
     }
@@ -893,11 +982,13 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
     private static final class ReceiverEntry {
         private final AckReceiverWindow  received_msgs;  // stores all msgs rcvd by a certain peer in seqno-order
         private final long               recv_conn_id;
+        private long                     timestamp;
 
         
         public ReceiverEntry(AckReceiverWindow received_msgs, long recv_conn_id) {
             this.received_msgs=received_msgs;
             this.recv_conn_id=recv_conn_id;
+            update();
         }
 
         void reset() {
@@ -905,13 +996,22 @@ public class UNICAST extends Protocol implements AckSenderWindow.RetransmitComma
                 received_msgs.reset();
         }
 
+        void update() {timestamp=System.currentTimeMillis();}
+        long age() {return System.currentTimeMillis() - timestamp;}
 
         public String toString() {
             StringBuilder sb=new StringBuilder();
             if(received_msgs != null)
                 sb.append(received_msgs).append(", ");
             sb.append("recv_conn_id=" + recv_conn_id);
+            sb.append(" (" + age() + " ms old)");
             return sb.toString();
+        }
+    }
+
+    protected class ConnectionReaper implements Runnable {
+        public void run() {
+            reapIdleConnections();
         }
     }
 

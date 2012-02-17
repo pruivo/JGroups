@@ -1,7 +1,7 @@
 package org.jgroups.auth;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
+import java.io.DataInput;
+import java.io.DataOutput;
 import java.io.IOException;
 import java.security.InvalidKeyException;
 import java.security.KeyStore;
@@ -82,7 +82,6 @@ public class X509Token extends AuthToken {
     private Cipher cipher = null;
     private PrivateKey certPrivateKey = null;
     private X509Certificate certificate = null;
-    private static final long serialVersionUID = -514501306160844271L;
 
     public X509Token() {
         // need an empty constructor
@@ -106,8 +105,8 @@ public class X509Token extends AuthToken {
 
     public boolean authenticate(AuthToken token, Message msg) {
         if (!this.valueSet) {
-            if (log.isFatalEnabled()) {
-                log.fatal("X509Token not setup correctly - check token attrs");
+            if (log.isErrorEnabled()) {
+                log.error("X509Token not setup correctly - check token attrs");
             }
             return false;
         }
@@ -116,8 +115,8 @@ public class X509Token extends AuthToken {
             // got a valid X509 token object
             X509Token serverToken = (X509Token) token;
             if (!serverToken.valueSet) {
-                if (log.isFatalEnabled()) {
-                    log.fatal("X509Token - recieved token not valid");
+                if (log.isErrorEnabled()) {
+                    log.error("X509Token - recieved token not valid");
                 }
                 return false;
             }
@@ -135,8 +134,8 @@ public class X509Token extends AuthToken {
                     return true;
                 }
             } catch (Exception e) {
-                if (log.isFatalEnabled()) {
-                    log.fatal(e.toString());
+                if (log.isErrorEnabled()) {
+                    log.error(e.toString());
                 }
             }
         }
@@ -146,15 +145,14 @@ public class X509Token extends AuthToken {
         return false;
     }
 
-    public void writeTo(DataOutputStream out) throws IOException {
+    public void writeTo(DataOutput out) throws Exception {
         if (log.isDebugEnabled()) {
             log.debug("X509Token writeTo()");
         }
         Util.writeByteBuffer(this.encryptedToken, out);
     }
 
-    public void readFrom(DataInputStream in) throws IOException, IllegalAccessException,
-                    InstantiationException {
+    public void readFrom(DataInput in) throws Exception {
         if (log.isDebugEnabled()) {
             log.debug("X509Token readFrom()");
         }

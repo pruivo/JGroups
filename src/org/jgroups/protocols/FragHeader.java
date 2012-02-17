@@ -2,6 +2,7 @@ package org.jgroups.protocols;
 
 import org.jgroups.Global;
 import org.jgroups.Header;
+import org.jgroups.util.Util;
 
 import java.io.*;
 
@@ -28,18 +29,18 @@ public class FragHeader extends Header {
     }
 
 
-    public void writeTo(DataOutputStream out) throws IOException {
-        out.writeLong(id);
+    public void writeTo(DataOutput out) throws Exception {
+        Util.writeLong(id, out);
         out.writeInt(frag_id);
         out.writeInt(num_frags);
     }
 
     public int size() {
-        return Global.LONG_SIZE + 2*Global.INT_SIZE;
+        return Util.size(id) + 2*Global.INT_SIZE;
     }
 
-    public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
-        id=in.readLong();
+    public void readFrom(DataInput in) throws Exception {
+        id=Util.readLong(in);
         frag_id=in.readInt();
         num_frags=in.readInt();
     }

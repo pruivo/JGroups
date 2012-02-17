@@ -28,25 +28,25 @@ public class DigestTest {
 
     @BeforeClass
     void beforeClass() throws Exception {
-        a1=Util.createRandomAddress();
-        a2=Util.createRandomAddress();
-        a3=Util.createRandomAddress();
+        a1=Util.createRandomAddress("a1");
+        a2=Util.createRandomAddress("a2");
+        a3=Util.createRandomAddress("a3");
     }
 
     @BeforeMethod
     void beforeMethod() {
-        Map<Address, Digest.Entry> map=new HashMap<Address, Digest.Entry>();
-        map.put(a1, new Digest.Entry(4, 500, 501));
-        map.put(a2, new Digest.Entry(25, 26, 26));
-        map.put(a3, new Digest.Entry(20, 25, 33));
+        Map<Address, long[]> map=new HashMap<Address, long[]>();
+        map.put(a1, new long[]{500, 501});
+        map.put(a2, new long[]{26, 26});
+        map.put(a3, new long[]{25, 33});
         d=new Digest(map);
         md=new MutableDigest(map);
     }
 
 
     public void testSize() {
-        d2=new Digest(3);
-        Assert.assertEquals(0, d2.size());
+        md=new MutableDigest(3);
+        Assert.assertEquals(0, md.size());
     }
 
 
@@ -56,19 +56,19 @@ public class DigestTest {
         Assert.assertEquals(d, d);
         Assert.assertEquals(d, d2);
     }
-    
+
 
     public void testDifference(){
-		Map<Address, Digest.Entry> map=new HashMap<Address, Digest.Entry>();
-	    map.put(a1, new Digest.Entry(4, 500, 501));
-	    map.put(a2, new Digest.Entry(25, 26, 26));
-	    map.put(a3, new Digest.Entry(20, 25, 33));
-	    Digest digest =new Digest(map);
+		Map<Address, long[]> map=new HashMap<Address, long[]>();
+	    map.put(a1, new long[]{500, 501});
+	    map.put(a2, new long[]{26, 26});
+	    map.put(a3, new long[]{25, 33});
+	    Digest digest=new Digest(map);
 	     
-	    Map<Address, Digest.Entry> map2=new HashMap<Address, Digest.Entry>();       
-	    map2.put(a1, new Digest.Entry(4, 500, 501));
-	    map2.put(a2, new Digest.Entry(25, 26, 26));
-	    map2.put(a3, new Digest.Entry(20, 37, 33));
+	    Map<Address, long[]> map2=new HashMap<Address, long[]>();       
+	    map2.put(a1, new long[]{500, 501});
+	    map2.put(a2, new long[]{26, 26});
+	    map2.put(a3, new long[]{37, 33});
 	    Digest digest2 =new Digest(map2);
 
         Assert.assertNotSame(digest, digest2);
@@ -79,11 +79,11 @@ public class DigestTest {
         Assert.assertEquals(1, diff.size());
 	    
 	    
-	    Map<Address, Digest.Entry> map3=new HashMap<Address, Digest.Entry>();
-	    map3.put(a1, new Digest.Entry(4, 500, 501));
-	    map3.put(a2, new Digest.Entry(25, 26, 26));
-	    map3.put(a3, new Digest.Entry(20, 37, 33));
-	    map3.put(Util.createRandomAddress(), new Digest.Entry(1, 2, 3));
+	    Map<Address, long[]> map3=new HashMap<Address, long[]>();
+	    map3.put(a1, new long[]{500, 501});
+	    map3.put(a2, new long[]{26, 26});
+	    map3.put(a3, new long[]{37, 33});
+	    map3.put(Util.createRandomAddress(), new long[]{2, 3});
 	    Digest digest3 =new Digest(map3);
 	    
 	    diff = digest3.difference(digest);
@@ -104,23 +104,23 @@ public class DigestTest {
 
 
     public void testIsGreaterThanOrEqual() {
-        Map<Address, Digest.Entry> map=new HashMap<Address, Digest.Entry>();
-        map.put(a1, new Digest.Entry(4, 500, 501));
-        map.put(a2, new Digest.Entry(25, 26, 26));
-        map.put(a3, new Digest.Entry(20, 25, 33));
+        Map<Address, long[]> map=new HashMap<Address, long[]>();
+        map.put(a1, new long[]{500, 501});
+        map.put(a2, new long[]{26, 26});
+        map.put(a3, new long[]{25, 33});
         Digest my=new Digest(map);
 
         System.out.println("\nd: " + d + "\nmy: " + my);
         assert my.isGreaterThanOrEqual(d);
 
         map.remove(a3);
-        map.put(a3, new Digest.Entry(20, 26, 33));
+        map.put(a3, new long[]{26, 33});
         my=new Digest(map);
         System.out.println("\nd: " + d + "\nmy: " + my);
         assert my.isGreaterThanOrEqual(d);
 
         map.remove(a3);
-        map.put(a3, new Digest.Entry(20, 22, 32));
+        map.put(a3, new long[]{22, 32});
         my=new Digest(map);
         System.out.println("\nd: " + d + "\nmy: " + my);
         assert !(my.isGreaterThanOrEqual(d));
@@ -168,20 +168,28 @@ public class DigestTest {
 
 
     public void testImmutability4() {
-        Digest copy=md.copy();
+        MutableDigest copy=md.copy();
         Assert.assertEquals(copy, md);
         md.incrementHighestDeliveredSeqno(a1);
         assert !(copy.equals(md));
     }
 
 
+    public void testResize() {
+        md.add(Util.createRandomAddress("p"), 500, 510);
+        md.add(Util.createRandomAddress("q"), 10, 10);
+        md.add(Util.createRandomAddress("r"), 7, 10);
+        assert md.size() == 6;
+    }
+
+
     public void testSeal() {
         MutableDigest tmp=new MutableDigest(3);
-        tmp.add(a2, 1,2,3);
+        tmp.add(a2, 2,3);
         Assert.assertEquals(1, tmp.size());
         tmp.seal();
         try {
-            tmp.add(a2, 4,5,6);
+            tmp.add(a2, 5,6);
             assert false : "should run into an exception";
         }
         catch(IllegalAccessError e) {
@@ -210,9 +218,9 @@ public class DigestTest {
 
     public void testAdd() {
         Assert.assertEquals(3, md.size());
-        md.add(a1, 100, 200, 201);
+        md.add(a1, 200, 201);
         Assert.assertEquals(3, md.size());
-        md.add(Util.createRandomAddress(), 1,2,3);
+        md.add(Util.createRandomAddress("p"), 2,3);
         Assert.assertEquals(4, md.size());
     }
 
@@ -226,23 +234,24 @@ public class DigestTest {
 
     public void testAddDigest2() {
         MutableDigest tmp=new MutableDigest(4);
-        tmp.add(Util.createRandomAddress(), 1,2,3);
-        tmp.add(Util.createRandomAddress(), 1,2,3);
-        tmp.add(a2, 1,2,3);
-        tmp.add(a3, 1,2,3);
+        tmp.add(Util.createRandomAddress(), 2, 3);
+        tmp.add(Util.createRandomAddress(), 2,3);
+        tmp.add(a2, 2,3);
+        tmp.add(a3, 2,3);
         md.add(tmp);
         Assert.assertEquals(5, md.size());
     }
 
 
     public void testGet() {
-        Digest.Entry entry;
-        entry=d.get(a1);
-        Assert.assertEquals(entry, new Digest.Entry(4, 500, 501));
+        long[] entry=d.get(a1);
+        assert entry[0] ==500 && entry[1] == 501;
+
         entry=d.get(a2);
-        Assert.assertEquals(entry, new Digest.Entry(25, 26, 26));
+        assert entry[0] == 26 && entry[1] == 26;
+
         entry=d.get(a3);
-        Assert.assertEquals(entry, new Digest.Entry(20, 25, 33));
+        assert entry[0] == 25 && entry[1] == 33;
     }
 
 
@@ -278,7 +287,7 @@ public class DigestTest {
 
 
     public static void testConstructor2() {
-        Digest dd=new Digest(3);
+        Digest dd=new MutableDigest(3);
         Assert.assertEquals(0, dd.size());
     }
 
@@ -289,6 +298,39 @@ public class DigestTest {
     }
 
 
+    public void testCopyConstructor() {
+        Digest digest=new Digest(d);
+        assert digest.equals(d);
+    }
+
+     public void testCopyConstructorWithLargerDigest() {
+         MutableDigest dig=new MutableDigest(10);
+         dig.add(Util.createRandomAddress("A"), 1,1);
+         dig.add(Util.createRandomAddress("B"), 2,2);
+         dig.add(Util.createRandomAddress("C"), 3,3);
+
+         Digest digest=new Digest(dig);
+         assert digest.equals(dig);
+    }
+
+
+    public void testCopyConstructor2() {
+        Digest digest=new Digest(md);
+        assert digest.equals(md);
+    }
+
+
+    public void testCopyConstructor3() {
+        MutableDigest digest=new MutableDigest(d);
+        assert digest.equals(d);
+    }
+
+
+    public void testCopyConstructor4() {
+        MutableDigest digest=new MutableDigest(md);
+        assert digest.equals(md);
+    }
+
 
     public void testContains() {
         assert d.contains(a1);
@@ -297,23 +339,24 @@ public class DigestTest {
     }
 
 
+    public void testContainsAll() {
+        MutableDigest digest=new MutableDigest(5);
+        digest.add(a1, 1, 1);
+        digest.add(a2, 1, 1);
 
+        assert d.containsAll(digest);
+        assert !digest.containsAll(d);
 
-    public void testResetAt() {
-        md.resetAt(a1);
-        Assert.assertEquals(0, md.lowSeqnoAt(a1));
-        Assert.assertEquals(0, md.highestDeliveredSeqnoAt(a1));
-        Assert.assertEquals(0, md.highestReceivedSeqnoAt(a1));
+        digest.add(a3, 1, 1);
+
+        assert d.containsAll(digest);
+        assert digest.containsAll(d);
+
+        digest.add(Util.createRandomAddress("p"), 2, 2);
+
+        assert !d.containsAll(digest);
+        assert digest.containsAll(d);
     }
-
-
-
-    public void testLowSeqnoAt() {
-        Assert.assertEquals(4, d.lowSeqnoAt(a1));
-        Assert.assertEquals(25, d.lowSeqnoAt(a2));
-        Assert.assertEquals(20, d.lowSeqnoAt(a3));
-    }
-
 
 
     public void testHighSeqnoAt() {
@@ -322,11 +365,15 @@ public class DigestTest {
         Assert.assertEquals(25, d.highestDeliveredSeqnoAt(a3));
     }
 
-//    public void testSetHighSeqnoAt() {
-//        assertEquals(500, md.highSeqnoAt(a1));
-//        md.setHighSeqnoAt(a1, 555);
-//        assertEquals(555, md.highSeqnoAt(a1));
-//    }
+
+    public void testReplace() {
+        MutableDigest digest=new MutableDigest(2);
+        digest.add(Util.createRandomAddress("x"), 1,1);
+        digest.add(Util.createRandomAddress("y"), 2,2);
+
+        md.replace(digest);
+        assert digest.equals(md);
+    }
 
 
     public void testHighSeqnoSeenAt() {
@@ -335,19 +382,11 @@ public class DigestTest {
         Assert.assertEquals(33, d.highestReceivedSeqnoAt(a3));
     }
 
-//    public void testSetHighSeenSeqnoAt() {
-//        assertEquals(26, md.highSeqnoSeenAt(a2));
-//        md.setHighSeqnoSeenAt(a2, 100);
-//        assertEquals(100, md.highSeqnoSeenAt(a2));
-//    }
-
 
     public void testSetHighestDeliveredAndSeenSeqnoAt() {
-        Assert.assertEquals(4, d.lowSeqnoAt(a1));
         Assert.assertEquals(500, d.highestDeliveredSeqnoAt(a1));
         Assert.assertEquals(501, md.highestReceivedSeqnoAt(a1));
-        md.setHighestDeliveredAndSeenSeqnos(a1, 2, 10, 20);
-        Assert.assertEquals(2, md.lowSeqnoAt(a1));
+        md.setHighestDeliveredAndSeenSeqnos(a1, 10, 20);
         Assert.assertEquals(10, md.highestDeliveredSeqnoAt(a1));
         Assert.assertEquals(20, md.highestReceivedSeqnoAt(a1));
     }
@@ -355,11 +394,9 @@ public class DigestTest {
 
     public void testCopy() {
         d=d.copy();
-        testLowSeqnoAt();
         testHighSeqnoAt();
         testHighSeqnoSeenAt();
         testContains();
-        testResetAt();
     }
 
 
@@ -375,7 +412,7 @@ public class DigestTest {
         Digest copy=md.copy();
         System.out.println("md=" + md + "\ncopy=" + copy);
         Assert.assertEquals(md, copy);
-        md.add(a1, 4, 500, 1000);
+        md.add(Util.createRandomAddress("p"), 500, 1000);
         System.out.println("md=" + md + "\ncopy=" + copy);
         assert !(md.equals(copy));
     }
@@ -383,10 +420,10 @@ public class DigestTest {
 
 
     public void testMerge() {
-        Map<Address, Digest.Entry> map=new HashMap<Address, Digest.Entry>();
-        map.put(a1, new Digest.Entry(3, 499, 502));
-        map.put(a2, new Digest.Entry(20, 26, 27));
-        map.put(a3, new Digest.Entry(21, 26, 35));
+        Map<Address, long[]> map=new HashMap<Address, long[]>();
+        map.put(a1, new long[]{499, 502});
+        map.put(a2, new long[]{26, 27});
+        map.put(a3, new long[]{26, 35});
         MutableDigest digest=new MutableDigest(map);
 
         System.out.println("d: " + d);
@@ -398,15 +435,12 @@ public class DigestTest {
         Assert.assertEquals(3, d.size());
         Assert.assertEquals(3, digest.size());
 
-        Assert.assertEquals(3, digest.lowSeqnoAt(a1));
         Assert.assertEquals(500, digest.highestDeliveredSeqnoAt(a1));
         Assert.assertEquals(502, digest.highestReceivedSeqnoAt(a1));
 
-        Assert.assertEquals(20, digest.lowSeqnoAt(a2));
         Assert.assertEquals(26, digest.highestDeliveredSeqnoAt(a2));
         Assert.assertEquals(27, digest.highestReceivedSeqnoAt(a2));
 
-        Assert.assertEquals(20, digest.lowSeqnoAt(a3));
         Assert.assertEquals(26, digest.highestDeliveredSeqnoAt(a3));
         Assert.assertEquals(35, digest.highestReceivedSeqnoAt(a3));
     }
@@ -414,20 +448,14 @@ public class DigestTest {
 
     public void testNonConflictingMerge() {
         MutableDigest cons_d=new  MutableDigest(5);
-        Address ip1=Util.createRandomAddress(), ip2=Util.createRandomAddress();
+        Address ip1=Util.createRandomAddress("x"), ip2=Util.createRandomAddress("y");
 
-        cons_d.add(ip1, 1, 10, 10);
-        cons_d.add(ip2, 2, 20, 20);
+        cons_d.add(ip1, 10, 10);
+        cons_d.add(ip2, 20, 20);
         // System.out.println("\ncons_d before: " + cons_d);
         cons_d.merge(d);
 
         Assert.assertEquals(5, cons_d.size());
-        //System.out.println("\ncons_d after: " + cons_d);
-        Assert.assertEquals(1, cons_d.lowSeqnoAt(ip1));
-        Assert.assertEquals(2, cons_d.lowSeqnoAt(ip2));
-        Assert.assertEquals(4, cons_d.lowSeqnoAt(a1));
-        Assert.assertEquals(25, cons_d.lowSeqnoAt(a2));
-        Assert.assertEquals(20, cons_d.lowSeqnoAt(a3));
 
         Assert.assertEquals(10, cons_d.highestDeliveredSeqnoAt(ip1));
         Assert.assertEquals(20, cons_d.highestDeliveredSeqnoAt(ip2));
@@ -446,8 +474,8 @@ public class DigestTest {
 
     public void testConflictingMerge() {
         MutableDigest new_d=new MutableDigest(2);
-        new_d.add(a1, 5, 450, 501);
-        new_d.add(a3, 18, 28, 35);
+        new_d.add(a1, 450, 501);
+        new_d.add(a3, 28, 35);
         //System.out.println("\nd before: " + d);
         //System.out.println("new_: " + new_d);
         md.merge(new_d);
@@ -455,15 +483,12 @@ public class DigestTest {
         Assert.assertEquals(3, md.size());
         //System.out.println("d after: " + d);
 
-        Assert.assertEquals(4, md.lowSeqnoAt(a1));
         Assert.assertEquals(500, md.highestDeliveredSeqnoAt(a1));
         Assert.assertEquals(501, md.highestReceivedSeqnoAt(a1));
 
-        Assert.assertEquals(25, md.lowSeqnoAt(a2));
         Assert.assertEquals(26, md.highestDeliveredSeqnoAt(a2));
         Assert.assertEquals(26, md.highestReceivedSeqnoAt(a2));
 
-        Assert.assertEquals(18, md.lowSeqnoAt(a3));
         Assert.assertEquals(28, md.highestDeliveredSeqnoAt(a3));
         Assert.assertEquals(35, md.highestReceivedSeqnoAt(a3));
     }
@@ -476,13 +501,13 @@ public class DigestTest {
 
 
     public void testSameSenders1MNullDifferentLenth() {
-        d2=new Digest(1);
+        d2=new MutableDigest(1);
         assert !(d2.sameSenders(d));
     }
 
 
     public void testSameSenders1MNullSameLength() {
-        d2=new Digest(3);
+        d2=new MutableDigest(3);
         assert !(d2.sameSenders(d));
     }
 
@@ -495,9 +520,9 @@ public class DigestTest {
 
     public void testSameSendersNotIdentical() {
         MutableDigest tmp=new MutableDigest(3);
-        tmp.add(a1, 4, 500, 501);
-        tmp.add(a3, 20, 25, 33);
-        tmp.add(a2, 25, 26, 26);
+        tmp.add(a1, 500, 501);
+        tmp.add(a3, 25, 33);
+        tmp.add(a2, 26, 26);
         assert md.sameSenders(tmp);
         assert d.sameSenders(tmp);
     }
@@ -505,14 +530,14 @@ public class DigestTest {
 
     public void testSameSendersNotSameLength() {
         md=new MutableDigest(3);
-        md.add(a1, 4, 500, 501);
-        md.add(a2, 25, 26, 26);
+        md.add(a1, 500, 501);
+        md.add(a2, 26, 26);
         assert !(d.sameSenders(md));
     }
 
 
 
-    public void testStreamable() throws IOException, IllegalAccessException, InstantiationException {
+    public void testStreamable() throws Exception {
         ByteArrayOutputStream outstream=new ByteArrayOutputStream();
         DataOutputStream dos=new DataOutputStream(outstream);
         d.writeTo(dos);

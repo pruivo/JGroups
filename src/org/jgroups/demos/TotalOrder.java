@@ -10,6 +10,10 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.InetAddress;
 import java.nio.ByteBuffer;
 
@@ -22,7 +26,7 @@ import java.nio.ByteBuffer;
  * broadcast update messages to all members). When "Stop" is pressed, a stop message is broadcast to
  * all members, causing them to stop sending messages. The "Clear" button clears the shared state;
  * "GetState" refreshes it from the shared group state (using the state transfer protocol).<p>If the
- * demo is to be used to show TOTAL order, then the TOTAL protocol would have to be added to the
+ * demo is to be used to show total order, then the SEQUENCER protocol would have to be added to the
  * stack.
  *
  * @author Bela Ban
@@ -39,9 +43,7 @@ public class TotalOrder extends Frame {
     final Button quit=new Button("Quit");
     final Panel button_panel=new Panel();
     SenderThread sender=null;
-    ReceiverThread receiver=null;
     Channel channel;
-    Dialog error_dlg;
     long timeout=0;
     int field_size=0;
     int num_fields=0;
@@ -113,61 +115,6 @@ public class TotalOrder extends Frame {
     }
 
 
-    class ReceiverThread extends Thread {
-        SetStateEvent set_state_evt;
-        boolean running=true;
-
-
-        public void stopReceiver() {
-            running=false;
-            interrupt();
-        }
-
-        public void run() {
-            this.setName("ReceiverThread");
-            Message msg;
-            Object o;
-            ByteBuffer buf;
-            TotOrderRequest req;
-            while(running) {
-                try {
-                    o=channel.receive(0);
-                    if(o instanceof Message) {
-                        try {
-                            msg=(Message)o;
-                            req=new TotOrderRequest();
-                            buf=ByteBuffer.wrap(msg.getBuffer());
-                            req.init(buf);
-                            processRequest(req);
-                        }
-                        catch(Exception e) {
-                            System.err.println(e);
-                        }
-                    }
-                    else
-                        if(o instanceof GetStateEvent) {
-                            int[][] copy_of_state=canvas.getCopyOfState();
-                            channel.returnState(Util.objectToByteBuffer(copy_of_state));
-                        }
-                        else
-                            if(o instanceof SetStateEvent) {  // state was received, set it !
-                                set_state_evt=(SetStateEvent)o;
-                                canvas.setState(Util.objectFromByteBuffer(set_state_evt.getArg()));
-                            }
-                            else
-                                if(o instanceof View) System.out.println(o.toString());
-                }
-                catch(ChannelClosedException closed) {
-                    error("Channel has been closed; receiver thread quits");
-                    return;
-                }
-                catch(Exception e) {
-                    error(e.toString());
-                    return;
-                }
-            }
-        }
-    }
 
 
     void processRequest(TotOrderRequest req) throws Exception {
@@ -209,15 +156,7 @@ public class TotalOrder extends Frame {
         this.num=num;
         setFont(def_font);
 
-        try {
-            channel=new JChannel(props);
-            channel.connect("TotalOrderGroup");
-            channel.getState(null, 8000);
-        }
-        catch(Exception e) {
-            e.printStackTrace();
-            System.exit(-1);
-        }
+
 
         start.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
@@ -250,9 +189,7 @@ public class TotalOrder extends Frame {
         get_state.addActionListener(new ActionListener() {
             public void actionPerformed(ActionEvent e) {
                 try {
-                    boolean rc=channel.getState(null, 3000);
-                    if(rc == false)
-                        error("State could not be retrieved !");
+                    channel.getState(null, 3000);
                 }
                 catch(Throwable t) {
                     error("exception fetching state: " + t);
@@ -289,7 +226,42 @@ public class TotalOrder extends Frame {
         s=canvas.getSize();
         s.height+=100;
         setSize(s);
-        startReceiver();
+
+        try {
+            channel=new JChannel(props);
+            channel.setReceiver(new ReceiverAdapter() {
+                public void receive(Message msg) {
+                    try {
+                        TotOrderRequest req=new TotOrderRequest();
+                        ByteBuffer buf=ByteBuffer.wrap(msg.getBuffer());
+                        req.init(buf);
+                        processRequest(req);
+                    }
+                    catch(Exception e) {
+                        System.err.println(e);
+                    }
+                }
+
+                public void getState(OutputStream output) throws Exception {
+                    int[][] copy_of_state=canvas.getCopyOfState();
+                    Util.objectToStream(copy_of_state, new DataOutputStream(output));
+                }
+
+                public void setState(InputStream input) throws Exception {
+                    canvas.setState(Util.objectFromStream(new DataInputStream(input)));
+                }
+
+                public void viewAccepted(View view) {
+                    System.out.println("view = " + view);
+                }
+            });
+            channel.connect("TotalOrderGroup");
+            channel.getState(null, 8000);
+        }
+        catch(Exception e) {
+            e.printStackTrace();
+            System.exit(-1);
+        }
     }
 
 
@@ -307,12 +279,6 @@ public class TotalOrder extends Frame {
         }
     }
 
-    void startReceiver() {
-        if(receiver == null) {
-            receiver=new ReceiverThread();
-            receiver.start();
-        }
-    }
 
 
 
@@ -633,7 +599,6 @@ class MyCanvas extends Canvas {
         }
         catch(Exception e) {
             System.err.println(e);
-            return;
         }
     }
 
@@ -696,13 +661,13 @@ class MyCanvas extends Canvas {
                 g.drawRect(x, y, field_size, field_size);
                 x+=field_size;
             }
-            g.drawString(("" + (num_fields - i - 1)), x + 20, y + field_size / 2);
+            g.drawString((String.valueOf((num_fields - i - 1))), x + 20, y + field_size / 2);
             y+=field_size;
             x=x_offset;
         }
 
         for(int i=0; i < num_fields; i++) {
-            g.drawString(("" + i), x_offset + i * field_size + field_size / 2, y + 30);
+            g.drawString((String.valueOf(i)), x_offset + i * field_size + field_size / 2, y + 30);
         }
     }
 
@@ -716,7 +681,7 @@ class MyCanvas extends Canvas {
         synchronized(array) {
             for(int i=0; i < num_fields; i++)
                 for(int j=0; j < num_fields; j++) {
-                    num="" + array[i][j];
+                    num=String.valueOf(array[i][j]);
                     len=fm.stringWidth(num);
                     p=index2Coord(i, j);
                     g.drawString(num, p.x - (len / 2), p.y);

@@ -3,10 +3,11 @@ package org.jgroups.stack;
 
 import org.jgroups.Address;
 import org.jgroups.util.TimeScheduler;
-import org.jgroups.util.Util;
 
+import java.util.Collection;
 import java.util.Set;
-import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ConcurrentNavigableMap;
+import java.util.concurrent.ConcurrentSkipListMap;
 
 
 /**
@@ -25,10 +26,9 @@ import java.util.concurrent.ConcurrentMap;
  * the (previous) message list linearly on removal. Performance is about the same, or slightly better in
  * informal tests.
  * @author Bela Ban
- * @version $Revision: 1.4 $
  */
 public class DefaultRetransmitter extends Retransmitter {
-    private final ConcurrentMap<Long,Task> msgs=Util.createConcurrentMap();
+    private final ConcurrentNavigableMap<Long,Task> msgs=new ConcurrentSkipListMap<Long,Task>();
 
 
     /**
@@ -58,7 +58,7 @@ public class DefaultRetransmitter extends Retransmitter {
         Task new_task;
         for(long seqno=first_seqno; seqno <= last_seqno; seqno++) {
             // each task needs its own retransmission interval, as they are stateful *and* mutable, so we *need* to copy !
-            new_task=new SeqnoTask(seqno, RETRANSMIT_TIMEOUTS.copy(), cmd, sender);
+            new_task=new SeqnoTask(seqno, retransmit_timeouts.copy(), cmd, sender);
             Task old_task=msgs.putIfAbsent(seqno, new_task);
             if(old_task == null) // only schedule if we actually *added* the new task !
                 new_task.doSchedule(); // Entry adds itself to the timer
@@ -72,13 +72,34 @@ public class DefaultRetransmitter extends Retransmitter {
      * respective entry, cancel the entry from the retransmission
      * scheduler and remove it from the pending entries
      */
-    public int remove(long seqno) {
+    public void remove(long seqno) {
         Task task=msgs.remove(seqno);
-        if(task != null) {
+        if(task != null)
             task.cancel();
-            return task.getNumRetransmits();
+    }
+
+    /**
+     * Removes the given seqno and all seqnos lower than it
+     * @param seqno
+     * @param remove_all_below If true, all seqnos below seqno are removed, too
+     * @return
+     */
+    public void remove(long seqno, boolean remove_all_below) {
+        if(!remove_all_below) {
+            remove(seqno);
+            return;
         }
-        return -1;
+        if(msgs.isEmpty())
+            return;
+        ConcurrentNavigableMap<Long,Task> to_be_removed=msgs.headMap(seqno, true);
+        if(to_be_removed.isEmpty())
+            return;
+        Collection<Task> values=to_be_removed.values();
+        for(Task task: values) {
+            if(task != null)
+                task.cancel();
+        }
+        to_be_removed.clear();
     }
 
     /**

@@ -3,13 +3,15 @@ package org.jgroups.blocks;
 
 import org.jgroups.Address;
 import org.jgroups.Message;
-import org.jgroups.Transport;
 import org.jgroups.View;
 import org.jgroups.annotations.GuardedBy;
 import org.jgroups.util.Rsp;
 import org.jgroups.util.RspList;
 
-import java.util.*;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -48,14 +50,14 @@ import java.util.concurrent.TimeoutException;
  * 
  * @author Bela Ban
  */
-public class GroupRequest extends Request {
+public class GroupRequest<T> extends Request {
 
     /** Correlates requests and responses */
     @GuardedBy("lock")
-    private final Map<Address,Rsp> requests;
+    private final Map<Address,Rsp<T>> requests;
 
     @GuardedBy("lock")
-    int num_received, num_not_received, num_suspected;
+    int num_valid, num_received, num_suspected;
 
 
 
@@ -70,24 +72,16 @@ public class GroupRequest extends Request {
      * @param options The request options to be used for this call
      */
     public GroupRequest(Message msg, RequestCorrelator corr, Collection<Address> targets, RequestOptions options) {
-        super(msg, corr, null, options);
+        super(msg, corr, options);
         int size=targets.size();
-        requests=new HashMap<Address,Rsp>(size);
+        requests=new HashMap<Address,Rsp<T>>(size);
         setTargets(targets);
     }
 
-    public GroupRequest(Message m, RequestCorrelator corr, Address target, RequestOptions options) {
-        super(m, corr, null, options);
-        requests=new HashMap<Address,Rsp>(1);
+    public GroupRequest(Message msg, RequestCorrelator corr, Address target, RequestOptions options) {
+        super(msg, corr, options);
+        requests=new HashMap<Address,Rsp<T>>(1);
         setTarget(target);
-    }
-
-
-    public GroupRequest(Message m, Transport transport, Collection<Address> mbrs, RequestOptions options) {
-        super(m, null, transport, options);
-        int size=mbrs.size();
-        requests=new HashMap<Address,Rsp>(size);
-        setTargets(mbrs);
     }
 
 
@@ -111,26 +105,31 @@ public class GroupRequest extends Request {
      * Adds a response to the response table. When all responses have been received,
      * <code>execute()</code> returns.
      */
-    public void receiveResponse(Object response_value, Address sender) {
+    @SuppressWarnings("unchecked")
+    public void receiveResponse(Object response_value, Address sender, boolean is_exception) {
         if(done)
             return;
-        Rsp rsp=requests.get(sender);
+        Rsp<T> rsp=requests.get(sender);
         if(rsp == null)
             return;
 
         RspFilter rsp_filter=options.getRspFilter();
         boolean responseReceived=false;
-        if(!rsp.wasReceived()) {
-            if((responseReceived=(rsp_filter == null) || rsp_filter.isAcceptable(response_value, sender)))
-                rsp.setValue(response_value);
-            rsp.setReceived(responseReceived);
-        }
 
         lock.lock();
         try {
-            if(responseReceived)
+            if(!rsp.wasReceived()) {
                 num_received++;
-            done=rsp_filter == null? responsesComplete() : !rsp_filter.needMoreResponses();
+                if((responseReceived=(rsp_filter == null) || rsp_filter.isAcceptable(response_value, sender))) {
+                    if(is_exception && response_value instanceof Throwable)
+                        rsp.setException((Throwable)response_value);
+                    else
+                        rsp.setValue((T)response_value);
+                    num_valid++;
+                }
+            }
+
+            done=responsesComplete() || (rsp_filter != null && !rsp_filter.needMoreResponses());
             if(responseReceived || done)
                 completed.signalAll(); // wakes up execute()
             if(done && corr != null)
@@ -155,10 +154,9 @@ public class GroupRequest extends Request {
             return;
 
         boolean changed=false;
-        Rsp rsp=requests.get(suspected_member);
+        Rsp<T> rsp=requests.get(suspected_member);
         if(rsp !=  null) {
-            if(rsp.setSuspected(true)) {
-                rsp.setValue(null);
+            if(rsp.setSuspected()) {
                 changed=true;
                 lock.lock();
                 try {
@@ -194,7 +192,7 @@ public class GroupRequest extends Request {
      * </ul>
      */
     public void viewChange(View new_view) {
-        Vector<Address> mbrs=new_view != null? new_view.getMembers() : null;
+        List<Address> mbrs=new_view != null? new_view.getMembers() : null;
         if(mbrs == null)
             return;
 
@@ -204,12 +202,11 @@ public class GroupRequest extends Request {
 
         lock.lock();
         try {
-            for(Map.Entry<Address,Rsp> entry: requests.entrySet()) {
+            for(Map.Entry<Address,Rsp<T>> entry: requests.entrySet()) {
                 Address mbr=entry.getKey();
                 if(!mbrs.contains(mbr)) {
-                    Rsp rsp=entry.getValue();
-                    rsp.setValue(null);
-                    if(rsp.setSuspected(true)) {
+                    Rsp<T> rsp=entry.getValue();
+                    if(rsp.setSuspected()) {
                         num_suspected++;
                         changed=true;
                     }
@@ -231,14 +228,14 @@ public class GroupRequest extends Request {
 
 
     /** Returns the results as a RspList */
-    public RspList getResults() {
-        Collection<Rsp> rsps=requests.values();
-        return new RspList(rsps);
+    public RspList<T> getResults() {
+        Collection<Rsp<T>> rsps=requests.values();
+        return new RspList<T>(rsps);
     }
 
 
 
-    public RspList get() throws InterruptedException, ExecutionException {
+    public RspList<T> get() throws InterruptedException, ExecutionException {
         lock.lock();
         try {
             waitForResults(0);
@@ -249,7 +246,7 @@ public class GroupRequest extends Request {
         return getResults();
     }
 
-    public RspList get(long timeout, TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException {
+    public RspList<T> get(long timeout, TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException {
         boolean ok;
         lock.lock();
         try {
@@ -269,9 +266,9 @@ public class GroupRequest extends Request {
 
         if(!requests.isEmpty()) {
             ret.append(", entries:\n");
-            for(Map.Entry<Address,Rsp> entry: requests.entrySet()) {
+            for(Map.Entry<Address,Rsp<T>> entry: requests.entrySet()) {
                 Address mbr=entry.getKey();
-                Rsp rsp=entry.getValue();
+                Rsp<T> rsp=entry.getValue();
                 ret.append(mbr).append(": ").append(rsp).append("\n");
             }
         }
@@ -282,14 +279,12 @@ public class GroupRequest extends Request {
     /* --------------------------------- Private Methods -------------------------------------*/
 
     private void setTarget(Address mbr) {
-        requests.put(mbr, new Rsp(mbr));
-        num_not_received=1;
+        requests.put(mbr, new Rsp<T>(mbr));
     }
 
     private void setTargets(Collection<Address> mbrs) {
         for(Address mbr: mbrs)
-            requests.put(mbr, new Rsp(mbr));
-        num_not_received=requests.size();
+            requests.put(mbr, new Rsp<T>(mbr));
     }
 
     private static int determineMajority(int i) {
@@ -299,21 +294,7 @@ public class GroupRequest extends Request {
 
     private void sendRequest(final Collection<Address> targetMembers, long requestId) throws Exception {
         try {
-            if(corr != null) {
-                corr.sendRequest(requestId, targetMembers, request_msg, options.getMode() == GET_NONE? null : this, options);
-            }
-            else {
-                if(options.getAnycasting()) {                                                          
-                    for(Address mbr: targetMembers) {
-                        Message copy=request_msg.copy(true);
-                        copy.setDest(mbr);
-                        transport.send(copy);
-                    }
-                }
-                else {
-                    transport.send(request_msg);
-                }
-            }
+            corr.sendRequest(requestId, targetMembers, request_msg, options.getMode() == ResponseMode.GET_NONE? null : this, options);
         }
         catch(Exception ex) {
             if(corr != null)
@@ -332,29 +313,15 @@ public class GroupRequest extends Request {
 
         switch(options.getMode()) {
             case GET_FIRST:
-                if(num_received > 0)
-                    return true;
-                if(num_suspected >= num_total)
-                // e.g. 2 members, and both suspected
-                    return true;
-                break;
+                return num_valid >= 1 || num_suspected >= num_total || num_received >= num_total;
             case GET_ALL:
-                return num_received + num_suspected >= num_total;
+                return num_valid + num_suspected >= num_total || num_received >= num_total;
             case GET_MAJORITY:
                 int majority=determineMajority(num_total);
-                if(num_received + num_suspected >= majority)
-                    return true;
-                break;
-            case GET_ABS_MAJORITY:
-                majority=determineMajority(num_total);
-                if(num_received >= majority)
-                    return true;
-                break;
-            case GET_N:
-                return true;
+                return num_valid + num_suspected >= majority || num_received >= num_total;
             case GET_NONE:
                 return true;
-            default :
+            default:
                 if(log.isErrorEnabled()) log.error("rsp_mode " + options.getMode() + " unknown !");
                 break;
         }

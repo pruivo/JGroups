@@ -17,30 +17,22 @@ public class GroupAddress implements Address {
         destinations = new HashSet<Address>();
     }
 
-    public void addAddress(Address addr) {
-        destinations.add(addr);
+    public void addAddress(Address address) {
+        destinations.add(address);
     }
 
-    public void addAllAddress(Collection<Address> addrs) {
-        destinations.addAll(addrs);
+    public void addAllAddress(Collection<Address> addresses) {
+        destinations.addAll(addresses);
     }
 
     public Set<Address> getAddresses() {
         return destinations;
     }
 
-    public boolean isMulticastAddress() {
-        return false;
-    }
-
-    public boolean isGroupAddress() {
-        return true;
-    }
-
     public int size() {
         int size = Global.INT_SIZE;
-        for(Address addr : destinations) {
-            size += Util.size(addr);
+        for(Address address : destinations) {
+            size += Util.size(address);
         }
         return size;
     }
@@ -53,8 +45,8 @@ public class GroupAddress implements Address {
     @Override
     public int hashCode() {
         int hc = 0;
-        for(Address addr : destinations) {
-            hc += addr.hashCode();
+        for(Address address : destinations) {
+            hc += address.hashCode();
         }
         return hc;
     }
@@ -92,26 +84,31 @@ public class GroupAddress implements Address {
         }
     }
 
-    public void writeExternal(ObjectOutput out) throws IOException {
-        out.writeInt(destinations.size());
-        for(Address addr : destinations) {
-            out.writeObject(addr);
-        }
-
-    }
-
-    public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
-        int size = in.readInt();
-        for( ; size > 0; --size) {
-            destinations.add((Address) in.readObject());
-        }
-    }
-
-    public void writeTo(DataOutputStream out) throws IOException {
+    @Override
+    public void writeTo(DataOutput out) throws Exception {
         Util.writeAddresses(destinations, out);
     }
 
-    public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
+    @Override
+    public void readFrom(DataInput in) throws Exception {
         destinations = (Set<Address>) Util.readAddresses(in, HashSet.class);
+    }
+
+    @Override
+    public void writeExternal(ObjectOutput objectOutput) throws IOException {
+        try {
+            writeTo(objectOutput);
+        } catch (Exception e) {
+            throw new IOException(e);
+        }
+    }
+
+    @Override
+    public void readExternal(ObjectInput objectInput) throws IOException, ClassNotFoundException {
+        try {
+            readFrom(objectInput);
+        } catch (Exception e) {
+            throw new IOException(e);
+        }
     }
 }

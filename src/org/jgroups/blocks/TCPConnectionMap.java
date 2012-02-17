@@ -1,6 +1,7 @@
 package org.jgroups.blocks;
 
 import org.jgroups.Address;
+import org.jgroups.Global;
 import org.jgroups.Version;
 import org.jgroups.logging.Log;
 import org.jgroups.logging.LogFactory;
@@ -369,14 +370,20 @@ public class TCPConnectionMap{
             if(peer_addr == null)
                 throw new IllegalArgumentException("Invalid parameter peer_addr="+ peer_addr);           
             SocketAddress destAddr=new InetSocketAddress(((IpAddress)peer_addr).getIpAddress(),((IpAddress)peer_addr).getPort());
-            this.sock=new Socket();
-            this.sock.bind(new InetSocketAddress(bind_addr, 0));
-            Util.connect(this.sock, destAddr, sock_conn_timeout);
+            this.sock=socket_factory.createSocket("jgroups.tcp.sock");
+            try {
+                this.sock.bind(new InetSocketAddress(bind_addr, 0));
+                Util.connect(this.sock, destAddr, sock_conn_timeout);
+            }
+            catch(Exception t) {
+                socket_factory.close(this.sock);
+                throw t;
+            }
             setSocketParameters(sock);
             this.out=new DataOutputStream(new BufferedOutputStream(sock.getOutputStream()));
             this.in=new DataInputStream(new BufferedInputStream(sock.getInputStream()));
             sendLocalAddress(getLocalAddress());
-            this.peer_addr=peer_addr;            
+            this.peer_addr=peer_addr;
         }
 
         TCPConnection(Socket s) throws Exception {
@@ -526,9 +533,9 @@ public class TCPConnectionMap{
          * doesn't match the receiver's cookie, the receiver will reject the
          * connection and close it.
          * 
-         * @throws IOException
+         * @throws Exception
          */
-        private void sendLocalAddress(Address local_addr) throws IOException {           
+        private void sendLocalAddress(Address local_addr) throws Exception {
             // write the cookie
             out.write(cookie, 0, cookie.length);
 
@@ -615,7 +622,7 @@ public class TCPConnectionMap{
             
             public void addToQueue(byte[] data) throws Exception{
                 if(canRun())
-                    send_queue.add(data);
+                    send_queue.put(data);
             }
 
             public void start() {
@@ -720,7 +727,10 @@ public class TCPConnectionMap{
                 if (isSenderUsed()) {
                     sender.stop();
                 }
-                Util.close(sock);
+                try {
+                    socket_factory.close(sock);
+                }
+                catch(Throwable t) {}
                 Util.close(out);
                 Util.close(in);
             } finally {

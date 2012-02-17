@@ -203,7 +203,7 @@ public class SharedTransportTest extends ChannelTestBase {
 
 
 
-    public void testReferenceCounting() throws ChannelException {
+    public void testReferenceCounting() throws Exception {
         a=createSharedChannel(SINGLETON_1);
         r1=new MyReceiver("a");
         a.setReceiver(r1);
@@ -220,9 +220,9 @@ public class SharedTransportTest extends ChannelTestBase {
         b.connect("B");
         c.connect("C");
 
-        a.send(null, null, "message from a");
-        b.send(null, null, "message from b");
-        c.send(null, null, "message from c");
+        a.send(null, "message from a");
+        b.send(null, "message from b");
+        c.send(null, "message from c");
         Util.sleep(500);
         assert r1.size() == 1;
         assert r2.size() == 1;
@@ -233,8 +233,8 @@ public class SharedTransportTest extends ChannelTestBase {
 
         b.disconnect();
         System.out.println("\n");
-        a.send(null, null, "message from a");
-        c.send(null, null, "message from c");
+        a.send(null, "message from a");
+        c.send(null, "message from c");
         Util.sleep(500);
         assert r1.size() == 1 : "size should be 1 but is " + r1.size();
         assert r3.size() == 1 : "size should be 1 but is " + r3.size();
@@ -243,7 +243,7 @@ public class SharedTransportTest extends ChannelTestBase {
 
         c.disconnect();
         System.out.println("\n");
-        a.send(null, null, "message from a");
+        a.send(null, "message from a");
         Util.sleep(500);
         assert r1.size() == 1;
     }
@@ -300,7 +300,39 @@ public class SharedTransportTest extends ChannelTestBase {
         c.setReceiver(new MyReceiver("C"));
         c.connect("B");
 
-        c.send(null, null, "hello world from C");
+        c.send(null, "hello world from C");
+    }
+
+
+    /**
+     * Test case for https://issues.jboss.org/browse/JGRP-1356
+     * @throws Exception
+     */
+    public void testFailedFirstChannel() throws Exception {
+        a=createSharedChannel(SINGLETON_1);
+
+        TP transport=a.getProtocolStack().getTransport();
+        transport.setBindPort(128); // set the bind_port to an incorrect value (< 1024), this will fail on connect()
+        a.setReceiver(new MyReceiver("A"));
+        try {
+            a.connect("A");
+        }
+        catch(Exception ex) {
+            System.out.println("caught exception - as expected: " + ex);
+        }
+
+        b=createSharedChannel(SINGLETON_1);
+        b.setReceiver(new MyReceiver("B"));
+
+        try {
+            b.connect("B");
+        }
+        catch(Exception ex) {
+            System.out.println("caught exception - as expected: " + ex);
+        }
+
+        transport.setBindPort(0); // fix the problem by picking an ephemeral port > 1024
+        b.connect("B");
     }
 
 
@@ -360,7 +392,7 @@ public class SharedTransportTest extends ChannelTestBase {
     /** Create channels A, B and C. Close A. This will close the timer and transports threads (!), so B will
      * not be able to send messages anymore, so C will not receive any messages
      * Tests http://jira.jboss.com/jira/browse/JGRP-737 */
-    public void testSendingOfMessagesAfterChannelClose() throws ChannelException {
+    public void testSendingOfMessagesAfterChannelClose() throws Exception {
         MyReceiver rec_a=new MyReceiver("A"), rec_b=new MyReceiver("B"), rec_c=new MyReceiver("C");
         System.out.println("-- creating A");
         a=createSharedChannel(SINGLETON_1);
@@ -377,13 +409,13 @@ public class SharedTransportTest extends ChannelTestBase {
         c.setReceiver(rec_c);
         c.connect("B");
 
-        b.send(null, null, "first");
+        b.send(null, "first");
         Util.sleep(500); // msg delivery is asynchronous, so give members some time to receive the msg (incl retransmission)
         assertSize(1, rec_b, rec_c);
         assertSize(0, rec_a);
         a.close();
 
-        b.send(null, null, "second");
+        b.send(null, "second");
         Util.sleep(500);
         assertSize(0, rec_a);
         assertSize(2, rec_b, rec_c);
@@ -393,10 +425,9 @@ public class SharedTransportTest extends ChannelTestBase {
      * Use a CountDownLatch to concurrently connect 3 channels; confirms
      * the channels connect
      * 
-     * @throws ChannelException
-     * @throws InterruptedException
+     * @throws Exception
      */
-    public void testConcurrentCreation() throws ChannelException, InterruptedException
+    public void testConcurrentCreation() throws Exception
     {
        a=createSharedChannel(SINGLETON_1);
        r1=new MyReceiver("a");
@@ -473,7 +504,7 @@ public class SharedTransportTest extends ChannelTestBase {
         }
     }
 
-    private JChannel createSharedChannel(String singleton_name) throws ChannelException {
+    private JChannel createSharedChannel(String singleton_name) throws Exception {
         ProtocolStackConfigurator config=ConfiguratorFactory.getStackConfigurator(channel_conf);
         List<ProtocolConfiguration> protocols=config.getProtocolStack();
         ProtocolConfiguration transport=protocols.get(0);
@@ -485,7 +516,7 @@ public class SharedTransportTest extends ChannelTestBase {
     protected static void makeUnique(Channel channel, int num) throws Exception {
         ProtocolStack stack=channel.getProtocolStack();
         TP transport=stack.getTransport();
-        InetAddress bind_addr=transport.getBindAddressAsInetAddress();
+        InetAddress bind_addr=transport.getBindAddress();
 
         if(transport instanceof UDP) {
             String mcast_addr=ResourceManager.getNextMulticastAddress();

@@ -12,7 +12,6 @@ import org.testng.annotations.Test;
 
 import java.util.Arrays;
 import java.util.List;
-import java.util.Vector;
 
 /**
  * Author: Bela Ban
@@ -48,7 +47,7 @@ public class MembershipTest {
     public void testClone() {
         v1=Arrays.asList(a1, a2, a3);
         m2=new Membership(v1);
-        m1=(Membership)m2.clone();
+        m1=m2.copy();
         assert m1.size()  == m2.size();
         assert m1.contains(a1);
         assert m1.contains(a2);
@@ -112,7 +111,7 @@ public class MembershipTest {
 
     public void testGetMembers() {
         testAdd();
-        Vector v=m1.getMembers();
+        List<Address> v=m1.getMembers();
         assert v.size() == 2;
     }
 

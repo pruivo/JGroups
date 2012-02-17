@@ -9,11 +9,13 @@ import org.jgroups.Message;
 import org.jgroups.MessageListener;
 import org.jgroups.UpHandler;
 import org.jgroups.blocks.GroupRequest;
+import org.jgroups.blocks.MethodLookup;
 import org.jgroups.blocks.RequestCorrelator;
 import org.jgroups.blocks.RequestHandler;
 import org.jgroups.blocks.RequestOptions;
 import org.jgroups.blocks.RpcDispatcher;
 import org.jgroups.blocks.RspFilter;
+import org.jgroups.stack.Protocol;
 
 /**
  * A multiplexed message dispatcher.
@@ -52,13 +54,25 @@ public class MuxRpcDispatcher extends RpcDispatcher {
         start();
     }
 
+    public MuxRpcDispatcher(short scopeId, Channel channel, MessageListener messageListener, MembershipListener membershipListener, Object serverObject, MethodLookup method_lookup) {
+        this(scopeId);
+        
+        setMethodLookup(method_lookup);
+        setMessageListener(messageListener);
+        setMembershipListener(membershipListener);
+        setServerObject(serverObject);
+        setChannel(channel);
+        channel.addChannelListener(this);
+        start();
+    }
+    
     private Muxer<UpHandler> getMuxer() {
         UpHandler handler = channel.getUpHandler();
         return ((handler != null) && (handler instanceof MuxUpHandler)) ? (MuxUpHandler) handler : null;
     }
 
     @Override
-    protected RequestCorrelator createRequestCorrelator(Object transport, RequestHandler handler, Address localAddr) {
+    protected RequestCorrelator createRequestCorrelator(Protocol transport, RequestHandler handler, Address localAddr) {
         // We can't set the scope of the request correlator here
         // since this method is called from start() triggered in the
         // MessageDispatcher constructor, when this.scope is not yet defined
@@ -83,9 +97,16 @@ public class MuxRpcDispatcher extends RpcDispatcher {
         super.stop();
     }
 
+    /**
     @Override
-    protected GroupRequest cast(Collection<Address> dests, Message msg, RequestOptions options, boolean blockForResults) {
+    protected <T> GroupRequest<T> cast(Collection<Address> dests, Message msg, RequestOptions options, boolean blockForResults) throws Exception {
         RspFilter filter = options.getRspFilter();
         return super.cast(dests, msg, options.setRspFilter((filter != null) ? new NoMuxHandlerRspFilter(filter) : new NoMuxHandlerRspFilter()), blockForResults);
+    }*/
+
+    @Override
+    protected <T> GroupRequest <T> cast(Collection<Address> dests, Message msg, RequestOptions options, boolean blockForResults) throws Exception {
+        RspFilter filter = options.getRspFilter();
+        return super.cast(dests, msg, options.setRspFilter(NoMuxHandlerRspFilter.createInstance(filter)), blockForResults);
     }
 }

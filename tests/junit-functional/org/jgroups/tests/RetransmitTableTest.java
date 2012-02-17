@@ -57,6 +57,22 @@ public class RetransmitTableTest {
         assert table.size() == 9;
         assert table.capacity() == 30;
     }
+
+    public static void testAdditionWithOffset2() {
+        RetransmitTable table=new RetransmitTable(3, 10, 2);
+        addAndGet(table, 1000, "1000");
+        addAndGet(table, 1001, "1001");
+        table.compact();
+        addAndGet(table, 1005, "1005");
+        addAndGet(table, 1009, "1009");
+        addAndGet(table, 1010, "1010");
+        addAndGet(table, 1011, "1011");
+        addAndGet(table, 1019, "1019");
+        addAndGet(table, 1020, "1020");
+        addAndGet(table, 1029, "1029");
+        System.out.println("table: " + table.dump());
+        assert table.size() == 9;
+    }
     
 
     public static void testDuplicateAddition() {
@@ -72,6 +88,37 @@ public class RetransmitTableTest {
         assert table.size() == 5;
     }
 
+
+    public static void testRemove() {
+        RetransmitTable table=new RetransmitTable(3, 10, 1);
+        for(long i=1; i <= 20; i++)
+            if(i % 2 == 0)
+                table.put(i, new Message());
+        System.out.println("table = " + table);
+        assert table.size() == 10;
+
+        int num_null_msgs=table.getNullMessages(0, 20);
+        System.out.println("num_null_msgs = " + num_null_msgs);
+        assert num_null_msgs == 10;
+
+        for(long i=1; i <= 10; i++)
+            table.remove(i);
+        System.out.println("table = " + table);
+        assert table.size() == 5;
+
+        num_null_msgs=table.getNullMessages(0, 20);
+        System.out.println("num_null_msgs = " + num_null_msgs);
+        assert num_null_msgs == 15;
+    }
+
+    public static void testGetNullMessages() {
+        RetransmitTable table=new RetransmitTable(3, 10, 0);
+        table.put(1, MSG);
+        table.put(100, MSG);
+        System.out.println("table = " + table);
+        int num_null_elements=table.getNullMessages(0, 100);
+        assert num_null_elements == 98; // [1 .. 99] excluding 100, as it has been received
+    }
 
     public static void testDumpMatrix() {
         RetransmitTable table=new RetransmitTable(3, 10, 1);
@@ -248,6 +295,29 @@ public class RetransmitTableTest {
         table.compact();
         assert table.size() == 20;
         assert table.capacity() == 40;
+    }
+
+    public void testSizeOfAllMessages() {
+        RetransmitTable table=new RetransmitTable(3, 10, 0);
+        long size=table.sizeOfAllMessages(false);
+        assert size == 0;
+        size=table.sizeOfAllMessages(true);
+        assert size == 0;
+
+        byte[] buf=new byte[100];
+        Message msg=new Message(null, null, buf);
+        table.put(2,msg);
+
+        size=table.sizeOfAllMessages(false);
+        System.out.println("Size(): " + table.sizeOfAllMessages(true) + ", getLength(): " + size);
+        assert size == 100;
+
+        for(long i=5; i < 10; i++)
+            table.put(i, new Message(null, null, buf));
+
+        size=table.sizeOfAllMessages(false);
+        System.out.println("Size(): " + table.sizeOfAllMessages(true) + ", getLength(): " + size);
+        assert size == 6 * 100;
     }
 
 

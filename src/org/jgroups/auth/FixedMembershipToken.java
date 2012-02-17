@@ -21,18 +21,17 @@
  */
 package org.jgroups.auth;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.StringTokenizer;
-
 import org.jgroups.Event;
 import org.jgroups.Message;
 import org.jgroups.PhysicalAddress;
 import org.jgroups.annotations.Property;
 import org.jgroups.util.Util;
+
+import java.io.DataInput;
+import java.io.DataOutput;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.StringTokenizer;
 
 /**
  * <p>
@@ -56,7 +55,6 @@ public class FixedMembershipToken extends AuthToken {
 
     @Property
     private String fixed_members_seperator = ",";
-    private static final long serialVersionUID = 4717069536900221681L;
 
     public FixedMembershipToken() {
     }
@@ -122,10 +120,12 @@ public class FixedMembershipToken extends AuthToken {
     /**
      * Required to serialize the object to pass across the wire
      * 
+     *
+     *
      * @param out
      * @throws java.io.IOException
      */
-    public void writeTo(DataOutputStream out) throws IOException {
+    public void writeTo(DataOutput out) throws Exception {
         if (log.isDebugEnabled()) {
             log.debug("SimpleToken writeTo()");
         }
@@ -135,13 +135,12 @@ public class FixedMembershipToken extends AuthToken {
     /**
      * Required to deserialize the object when read in from the wire
      * 
+     *
+     *
      * @param in
-     * @throws IOException
-     * @throws IllegalAccessException
-     * @throws InstantiationException
+     * @throws Exception
      */
-    public void readFrom(DataInputStream in) throws IOException, IllegalAccessException,
-                    InstantiationException {
+    public void readFrom(DataInput in) throws Exception {
         if (log.isDebugEnabled()) {
             log.debug("SimpleToken readFrom()");
         }

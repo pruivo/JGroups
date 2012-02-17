@@ -1,8 +1,7 @@
 package org.jgroups.protocols;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
+import java.io.DataInput;
+import java.io.DataOutput;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -34,7 +33,7 @@ import org.jgroups.annotations.Property;
 import org.jgroups.blocks.locking.AwaitInfo;
 import org.jgroups.blocks.locking.LockInfo;
 import org.jgroups.blocks.locking.LockNotification;
-import org.jgroups.blocks.locking.Owner;
+import org.jgroups.util.Owner;
 import org.jgroups.stack.Protocol;
 import org.jgroups.util.Streamable;
 import org.jgroups.util.Util;
@@ -502,6 +501,8 @@ abstract public class Locking extends Protocol {
     protected void handleDeleteLockRequest(String lock_name) {
         synchronized(server_locks) {
             ServerLock lock = server_locks.get(lock_name);
+            if(lock == null)
+                return;
             synchronized (lock.condition) {
                 if (lock.condition.queue.isEmpty()) {
                     server_locks.remove(lock_name);
@@ -1230,7 +1231,7 @@ abstract public class Locking extends Protocol {
     protected static class Request implements Streamable {
         protected Type    type;
         protected String  lock_name;
-        protected Owner   owner;
+        protected Owner owner;
         protected long    timeout=0;
         protected boolean is_trylock;
 
@@ -1250,7 +1251,7 @@ abstract public class Locking extends Protocol {
             this.is_trylock=is_trylock;
         }
 
-        public void writeTo(DataOutputStream out) throws IOException {
+        public void writeTo(DataOutput out) throws Exception {
             out.writeByte(type.ordinal());
             Util.writeString(lock_name, out);
             Util.writeStreamable(owner, out);
@@ -1258,7 +1259,7 @@ abstract public class Locking extends Protocol {
             out.writeBoolean(is_trylock);
         }
 
-        public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
+        public void readFrom(DataInput in) throws Exception {
             type=Type.values()[in.readByte()];
             lock_name=Util.readString(in);
             owner=(Owner)Util.readStreamable(Owner.class, in);
@@ -1302,10 +1303,10 @@ abstract public class Locking extends Protocol {
             return 0;
         }
 
-        public void writeTo(DataOutputStream out) throws IOException {
+        public void writeTo(DataOutput out) throws Exception {
         }
 
-        public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
+        public void readFrom(DataInput in) throws Exception {
         }
     }
 

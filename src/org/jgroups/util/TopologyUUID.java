@@ -13,7 +13,7 @@ import java.security.SecureRandom;
  * @author Bela Ban
  */
 public class TopologyUUID extends UUID {
-    private static final long serialVersionUID = 6057688946243812544L;
+    private static final long serialVersionUID = -3724100022170135811L;
     protected String site_id;
     protected String rack_id;
     protected String machine_id;
@@ -63,15 +63,18 @@ public class TopologyUUID extends UUID {
     }
 
     public boolean isSameSite(TopologyUUID addr) {
-        return addr != null && site_id != null  && site_id.equals(addr.getSiteId());
+        return addr != null
+          && ((site_id != null && site_id.equals(addr.getSiteId())) || (site_id == null && addr.getSiteId() == null));
     }
 
     public boolean isSameRack(TopologyUUID addr) {
-        return addr != null && rack_id != null  && rack_id.equals(addr.getRackId());
+        return addr != null
+          && ((rack_id != null && rack_id.equals(addr.getRackId())) || (rack_id == null && addr.getRackId() == null));
     }
 
     public boolean isSameMachine(TopologyUUID addr) {
-        return addr != null && machine_id != null  && machine_id.equals(addr.getMachineId());
+        return addr != null
+          && ((machine_id != null  && machine_id.equals(addr.getMachineId())) || (machine_id == null && addr.getMachineId() == null));
     }
 
 
@@ -86,14 +89,14 @@ public class TopologyUUID extends UUID {
         return retval;
     }
 
-    public void writeTo(DataOutputStream out) throws IOException {
+    public void writeTo(DataOutput out) throws Exception {
         super.writeTo(out);
         Util.writeString(site_id, out);
         Util.writeString(rack_id, out);
         Util.writeString(machine_id, out);
     }
 
-    public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
+    public void readFrom(DataInput in) throws Exception {
         super.readFrom(in);
         site_id=Util.readString(in);
         rack_id=Util.readString(in);
@@ -102,16 +105,26 @@ public class TopologyUUID extends UUID {
 
     public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
         super.readExternal(in);
-        site_id=(String)in.readObject();
-        rack_id=(String)in.readObject();
-        machine_id=(String)in.readObject();
+        try {
+            site_id=Util.readString(in);
+            rack_id=Util.readString(in);
+            machine_id=Util.readString(in);
+        }
+        catch(Exception e) {
+            throw new IOException(e);
+        }
     }
 
     public void writeExternal(ObjectOutput out) throws IOException {
         super.writeExternal(out);
-        out.writeObject(site_id);
-        out.writeObject(rack_id);
-        out.writeObject(machine_id);
+        try {
+            Util.writeString(site_id, out);
+            Util.writeString(rack_id, out);
+            Util.writeString(machine_id, out);
+        }
+        catch(Exception e) {
+            throw new IOException(e);
+        }
     }
 
     public String toString() {

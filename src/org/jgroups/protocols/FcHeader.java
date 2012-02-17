@@ -3,9 +3,8 @@ package org.jgroups.protocols;
 import org.jgroups.Global;
 import org.jgroups.Header;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
+import java.io.DataInput;
+import java.io.DataOutput;
 
 /**
  * Header used by various flow control protocols
@@ -29,11 +28,11 @@ public class FcHeader extends Header {
         return Global.BYTE_SIZE;
     }
 
-    public void writeTo(DataOutputStream out) throws IOException {
+    public void writeTo(DataOutput out) throws Exception {
         out.writeByte(type);
     }
 
-    public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
+    public void readFrom(DataInput in) throws Exception {
         type=in.readByte();
     }
 

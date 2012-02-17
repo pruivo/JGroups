@@ -6,8 +6,6 @@ import org.jgroups.conf.ClassConfigurator;
 import org.jgroups.conf.PropertyConverter;
 import org.jgroups.conf.ProtocolConfiguration;
 import org.jgroups.protocols.TP;
-import org.jgroups.util.ThreadFactory;
-import org.jgroups.util.TimeScheduler;
 import org.jgroups.util.Tuple;
 import org.jgroups.util.Util;
 
@@ -31,7 +29,7 @@ import java.util.concurrent.ConcurrentMap;
  *
  * @author Bela Ban
  */
-public class ProtocolStack extends Protocol implements Transport {
+public class ProtocolStack extends Protocol {
     public static final int ABOVE = 1; // used by insertProtocol()
     public static final int BELOW = 2; // used by insertProtocol()
 
@@ -48,7 +46,7 @@ public class ProtocolStack extends Protocol implements Transport {
     private volatile boolean              stopped=true;
 
 
-    private final TP.ProbeHandler props_handler=new TP.ProbeHandler() {
+    private final DiagnosticsHandler.ProbeHandler props_handler=new DiagnosticsHandler.ProbeHandler() {
 
         public Map<String, String> handleProbe(String... keys) {
             for(String key: keys) {
@@ -143,17 +141,10 @@ public class ProtocolStack extends Protocol implements Transport {
     };
 
 
-    public ProtocolStack(JChannel channel) throws ChannelException {
-        // this.configs=configs;
+    public ProtocolStack(JChannel channel) throws Exception {
         this.channel=channel;
-
         Class<?> tmp=ClassConfigurator.class; // load this class, trigger init()
-        try {
-            tmp.newInstance();
-        }
-        catch(Exception e) {
-            throw new ChannelException("failed initializing ClassConfigurator", e);
-        }
+        tmp.newInstance();
     }
 
 
@@ -167,50 +158,6 @@ public class ProtocolStack extends Protocol implements Transport {
         this.channel=ch;
     }
 
-    /**
-     * @deprecated Use {@link org.jgroups.stack.Protocol#getThreadFactory()}  instead
-     * @return
-     */
-    public ThreadFactory getThreadFactory() {
-        TP transport=getTransport();
-        return transport != null? transport.getThreadFactory() : null;
-    }
-
-    @Deprecated
-    public static ThreadFactory getTimerThreadFactory() {
-        throw new UnsupportedOperationException("get the timer thread factory directly from the transport");
-    }
-
-    /**
-     * @deprecated Use {@link org.jgroups.stack.Protocol#getThreadFactory()} instead
-     * @param f
-     */
-    public void setThreadFactory(ThreadFactory f) {
-    }
-
-    /**
-     * @deprecated Use {@link TP#setTimerThreadFactory(org.jgroups.util.ThreadFactory)} instead
-     * @param f
-     */
-    public static void setTimerThreadFactory(ThreadFactory f) {
-    }
-
-
-
-    /**
-     * @deprecated Use {@link org.jgroups.protocols.TP#getTimer()} to fetch the timer and call getCorePoolSize() directly
-     * @return
-     */
-    public int getTimerThreads() {
-        TP transport=getTransport();
-        TimeScheduler timer;
-        if(transport != null) {
-            timer=transport.getTimer();
-            if(timer != null)
-                return timer.getMinThreads();
-        }
-        return -1;
-    }
 
     /** Returns all protocols in a list, from top to bottom. <em>These are not copies of protocols,
      so modifications will affect the actual instances !</em> */
@@ -347,22 +294,6 @@ public class ProtocolStack extends Protocol implements Transport {
         }
 
         return retval;
-    }
-
-    /**
-     * @deprecated Use {@link org.jgroups.protocols.TP#getTimer()} instead to fetch the timer from the
-     * transport and then invoke the method on it
-     * @return
-     */
-    public String dumpTimerQueue() {
-        TP transport=getTransport();
-        TimeScheduler timer;
-        if(transport != null) {
-            timer=transport.getTimer();
-            if(timer != null)
-                return timer.dumpTimerTasks();
-        }
-        return "";
     }
 
     /**
@@ -823,6 +754,30 @@ public class ProtocolStack extends Protocol implements Transport {
         return null;
     }
 
+    /**
+     * Replaces one protocol instance with another. Should be done before the stack is connected
+     * @param existing_prot
+     * @param new_prot
+     */
+    public void replaceProtocol(Protocol existing_prot, Protocol new_prot) throws Exception {
+        Protocol up_neighbor=existing_prot.getUpProtocol(), down_neighbor=existing_prot.getDownProtocol();
+
+        new_prot.setUpProtocol(existing_prot.getUpProtocol());
+        new_prot.setDownProtocol(existing_prot.getDownProtocol());
+        up_neighbor.setDownProtocol(new_prot);
+        if(down_neighbor != null)
+            down_neighbor.setUpProtocol(new_prot);
+
+        existing_prot.setDownProtocol(null);
+        existing_prot.setUpProtocol(null);
+        existing_prot.destroy();
+
+        if(new_prot.getUpProtocol() == this)
+            top_prot=new_prot;
+
+        new_prot.init();
+    }
+
 
 
     protected Protocol createProtocol(String classname) throws Exception {
@@ -979,7 +934,14 @@ public class ProtocolStack extends Protocol implements Transport {
                                 continue;
                             }
                             else {
-                                prot.start();
+                                try {
+                                    prot.start();
+                                }
+                                catch(Exception ex) {
+                                    counter.decrementStartCount();
+                                    up_prots.remove(cluster_name);
+                                    throw ex;
+                                }
                                 above_prot=prot;
                                 continue;
                             }
@@ -1039,18 +1001,8 @@ public class ProtocolStack extends Protocol implements Transport {
         stopped=true;
     }
 
-    /**
-     * Not needed anymore, just left in here for backwards compatibility with JBoss AS
-     * @deprecated
-     */
-    public void flushEvents() {
-
-    }
-
-
 
     /*--------------------------- Transport interface ------------------------------*/
-
     public void send(Message msg) throws Exception {
         down(new Event(Event.MSG, msg));
     }
@@ -1081,6 +1033,8 @@ public class ProtocolStack extends Protocol implements Transport {
             return top_prot.down(evt);
         return null;
     }
+
+
 
 
     /**

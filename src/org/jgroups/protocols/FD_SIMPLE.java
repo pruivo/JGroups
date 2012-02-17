@@ -10,10 +10,7 @@ import org.jgroups.util.Promise;
 import org.jgroups.util.TimeScheduler;
 
 import java.io.*;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.Vector;
+import java.util.*;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
@@ -43,7 +40,7 @@ public class FD_SIMPLE extends Protocol {
     long interval=3000;            // interval in msecs between are-you-alive messages
     @Property
     long timeout=3000;             // time (in msecs) to wait for a response to are-you-alive
-    final Vector<Address> members=new Vector<Address>();
+    final List<Address> members=new ArrayList<Address>();
     final Map<Address,Integer> counters=new HashMap<Address,Integer>();   // keys=Addresses, vals=Integer (count)
     @Property
     int max_missed_hbs=5;         // max number of missed responses until a member is suspected
@@ -93,7 +90,7 @@ public class FD_SIMPLE extends Protocol {
                         return null; // don't pass up further
 
                     case FdHeader.I_AM_ALIVE:
-                        if(log.isInfoEnabled()) log.info("received I_AM_ALIVE response from " + sender);
+                        if(log.isTraceEnabled()) log.trace("received I_AM_ALIVE response from " + sender);
                         heartbeat_lock.lock();
                         try {
                             if(task != null)
@@ -135,7 +132,7 @@ public class FD_SIMPLE extends Protocol {
                     try {
                         if(heartbeat_future == null || heartbeat_future.isDone()) {
                             task=new HeartbeatTask();
-                            if(log.isInfoEnabled()) log.info("starting heartbeat task");
+                            if(log.isTraceEnabled()) log.trace("starting heartbeat task");
                             heartbeat_future=timer.scheduleWithFixedDelay(task, interval, interval, TimeUnit.MILLISECONDS);
                         }
                     }
@@ -147,7 +144,7 @@ public class FD_SIMPLE extends Protocol {
                     heartbeat_lock.lock();
                     try {
                         if(heartbeat_future != null) {
-                            if(log.isInfoEnabled()) log.info("stopping heartbeat task");
+                            if(log.isTraceEnabled()) log.trace("stopping heartbeat task");
                             heartbeat_future.cancel(true);
                             heartbeat_future=null;
                             task=null;
@@ -163,7 +160,7 @@ public class FD_SIMPLE extends Protocol {
                     for(Iterator<Address> it=counters.keySet().iterator(); it.hasNext();) {
                         key=it.next();
                         if(!members.contains(key)) {
-                            if(log.isInfoEnabled()) log.info("removing " + key + " from counters");
+                            if(log.isTraceEnabled()) log.trace("removing " + key + " from counters");
                             it.remove();
                         }
                     }
@@ -185,15 +182,14 @@ public class FD_SIMPLE extends Protocol {
     Address getHeartbeatDest() {
         Address retval=null;
         int r, size;
-        Vector<Address> members_copy;
 
         if(members == null || members.size() < 2 || local_addr == null)
             return null;
-        members_copy=(Vector)members.clone();
-        members_copy.removeElement(local_addr); // don't select myself as heartbeat destination
+        List<Address> members_copy=new ArrayList<Address>(members);
+        members_copy.remove(local_addr); // don't select myself as heartbeat destination
         size=members_copy.size();
         r=((int)(Math.random() * (size + 1))) % size;
-        retval=members_copy.elementAt(r);
+        retval=members_copy.get(r);
         return retval;
     }
 
@@ -278,11 +274,11 @@ public class FD_SIMPLE extends Protocol {
             return Global.BYTE_SIZE;
         }
 
-        public void writeTo(DataOutputStream out) throws IOException {
+        public void writeTo(DataOutput out) throws Exception {
             out.writeByte(type);
         }
 
-        public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
+        public void readFrom(DataInput in) throws Exception {
             type=in.readByte();
         }
 
@@ -310,8 +306,8 @@ public class FD_SIMPLE extends Protocol {
                 return;
             }
 
-            if(log.isInfoEnabled())
-                log.info("sending ARE_YOU_ALIVE message to " + dest + ", counters are\n" + printCounters());
+            if(log.isTraceEnabled())
+                log.trace("sending ARE_YOU_ALIVE message to " + dest + ", counters are\n" + printCounters());
 
             promise.reset();
             msg=new Message(dest);
@@ -321,8 +317,8 @@ public class FD_SIMPLE extends Protocol {
             promise.getResult(timeout);
             num_missed_hbs=incrementCounter(dest);
             if(num_missed_hbs >= max_missed_hbs) {
-                if(log.isInfoEnabled())
-                    log.info("missed " + num_missed_hbs + " from " + dest + ", suspecting member");
+                if(log.isTraceEnabled())
+                    log.trace("missed " + num_missed_hbs + " from " + dest + ", suspecting member");
                 up_prot.up(new Event(Event.SUSPECT, dest));
             }
         }

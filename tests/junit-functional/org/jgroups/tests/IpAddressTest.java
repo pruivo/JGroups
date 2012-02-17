@@ -130,15 +130,6 @@ public class IpAddressTest {
     }
 
 
-    public void testMcast() {
-        assert h.isMulticastAddress();
-        assert !a.isMulticastAddress();
-        assert !e.isMulticastAddress();
-        assert !g.isMulticastAddress();
-
-    }
-
-    
 
     public void testCompareTo() {
         Assert.assertEquals(0, a.compareTo(b));
@@ -194,30 +185,9 @@ public class IpAddressTest {
 
 
 
-    public static void testIPv6WithExternalization() throws IOException, ClassNotFoundException {
-        InetAddress tmp=Util.getNonLoopbackAddress();
-        IpAddress ip=new IpAddress(tmp, 5555);
-
-        ByteArrayOutputStream bos=new ByteArrayOutputStream();
-        ObjectOutputStream    oos=new ObjectOutputStream(bos);
-        byte[]                buf=null;
-        ByteArrayInputStream  bis=null;
-        ObjectInputStream     ois;
-
-        System.out.println("-- address is " + tmp);
-
-        oos.writeObject(ip);
-        buf=bos.toByteArray();
-        bis=new ByteArrayInputStream(buf);
-        ois=new ObjectInputStream(bis);
-        IpAddress ip2=(IpAddress)ois.readObject();
-        Assert.assertEquals(ip, ip2);
-    }
 
 
-
-
-    public static void testIPv6WithStreamable() throws IOException, ClassNotFoundException {
+    public static void testIPv6WithStreamable() throws Exception {
         InetAddress tmp=Util.getNonLoopbackAddress();
         IpAddress ip=new IpAddress(tmp, 5555);
 
@@ -239,77 +209,6 @@ public class IpAddressTest {
     }
 
 
-    public void testExternalization() throws Exception {
-        ByteArrayOutputStream bos=new ByteArrayOutputStream();
-        ObjectOutputStream    oos=new ObjectOutputStream(bos);
-        byte[]                buf=null;
-        ByteArrayInputStream  bis=null;
-        ObjectInputStream     ois;
-        IpAddress             a2, b2;
-        
-        a.setAdditionalData(null);
-        b.setAdditionalData("Bela Ban".getBytes());
-        oos.writeObject(a);
-        oos.writeObject(b);
-        
-
-        buf=bos.toByteArray();        
-        bis=new ByteArrayInputStream(buf);
-        ois=new ObjectInputStream(bis);
-        a2=(IpAddress)ois.readObject();
-        b2=(IpAddress)ois.readObject();
-
-        Assert.assertEquals(a, a2);
-        Assert.assertEquals(b, b2);
-
-        assert a2.getAdditionalData() == null;
-        Assert.assertEquals("Bela Ban", new String(b2.getAdditionalData()));
-    }
-
-    
-    
-
-    public void testExternalizationAdditionalData() throws Exception {
-        ByteArrayOutputStream bos=new ByteArrayOutputStream();
-        ObjectOutputStream    oos=new ObjectOutputStream(bos);
-        byte[]                buf=null;
-        ByteArrayInputStream  bis=null;
-        ObjectInputStream     ois;
-        IpAddress             a2, b2, c2, d2, e2, f2, g2, h2;
-        
-        oos.writeObject(a);
-        oos.writeObject(b);
-        oos.writeObject(c);
-        oos.writeObject(d);
-        oos.writeObject(e);
-        oos.writeObject(f);
-        oos.writeObject(g);
-        oos.writeObject(h);
-
-
-        buf=bos.toByteArray();
-        bis=new ByteArrayInputStream(buf);
-        ois=new ObjectInputStream(bis);
-        a2=(IpAddress)ois.readObject();
-        b2=(IpAddress)ois.readObject();
-        c2=(IpAddress)ois.readObject();
-        d2=(IpAddress)ois.readObject();
-        e2=(IpAddress)ois.readObject();
-        f2=(IpAddress)ois.readObject();
-        g2=(IpAddress)ois.readObject();
-        h2=(IpAddress)ois.readObject();
-
-        Assert.assertEquals(b2, c2);
-        Assert.assertEquals(a, a2);
-        Assert.assertEquals(b, b2);
-        Assert.assertEquals(c, c2);
-        Assert.assertEquals(d, d2);
-        Assert.assertEquals(e, e2);
-        Assert.assertEquals(f, f2);
-        Assert.assertEquals(g, g2);
-        Assert.assertEquals(h, h2);
-    }
-
 
 
     public void testStreamable() throws Exception {
@@ -321,13 +220,9 @@ public class IpAddressTest {
         IpAddress             a2, b2, x, x2, y, y2;
 
         x=createStackConformantAddress(5555);
-        x.setAdditionalData(new byte[]{'b','e','l','a'});
 
         y=createStackConformantAddress(1111);
-        y.setAdditionalData(new byte[]{'b','e','l','a'});
 
-        a.setAdditionalData(null);
-        b.setAdditionalData("Bela Ban".getBytes());
         a.writeTo(oos);
         b.writeTo(oos);
         x.writeTo(oos);
@@ -348,16 +243,8 @@ public class IpAddressTest {
         Assert.assertEquals(a, a2);
         Assert.assertEquals(b, b2);
 
-        assert a2.getAdditionalData() == null;
-        Assert.assertEquals("Bela Ban", new String(b2.getAdditionalData()));
-
-        assert x2.getAdditionalData() != null;
-        Assert.assertEquals(4, x2.getAdditionalData().length);
-
         assert y2.getIpAddress() != null;
         Assert.assertEquals(1111, y2.getPort());
-        assert y2.getAdditionalData() != null;
-        Assert.assertEquals(4, y2.getAdditionalData().length);
     }
 
 

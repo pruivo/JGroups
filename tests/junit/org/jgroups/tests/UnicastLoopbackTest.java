@@ -31,19 +31,14 @@ public class UnicastLoopbackTest extends ChannelTestBase {
 
 
     /**
-     * Tests that when UNICAST messages are sent with TP.loopback == true, the following 
-     * conditions hold:
+     * Tests that when UNICAST messages are sent with TP.loopback == true, the following conditions hold:
      * (i) no messages touch the network
      * (ii) all messages are correctly received
      * 
-     * @throws ChannelException
-     * @throws ChannelClosedException
-     * @throws ChannelNotConnectedException
      * @throws TimeoutException
-     * @throws Exception
      */
     public void testUnicastMsgsWithLoopback() throws Exception {
-    	final long TIMEOUT = 2 * 1000 ;
+    	final long TIMEOUT = 2 * 10000 ;
     	final int NUM=1000;
     	long num_msgs_sent_before = 0 ;
     	long num_msgs_sent_after = 0 ;

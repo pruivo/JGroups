@@ -3,9 +3,8 @@ package org.jgroups.protocols;
 import org.jgroups.Global;
 import org.jgroups.Header;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
+import java.io.DataInput;
+import java.io.DataOutput;
 
 /**
  * This Header class is used in conjunction with the PRIO protocol to prioritize message sending/receiving
@@ -45,11 +44,11 @@ public class PrioHeader extends Header {
 		return Global.BYTE_SIZE;
 	}
 
-	public void writeTo( DataOutputStream outstream ) throws IOException {
+	public void writeTo( DataOutput outstream ) throws Exception {
 		outstream.writeByte(priority);
 	}
 
-	public void readFrom( DataInputStream instream ) throws IOException, IllegalAccessException, InstantiationException {
+	public void readFrom( DataInput instream ) throws Exception {
 		priority=instream.readByte();
 	}
 

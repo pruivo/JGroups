@@ -11,45 +11,38 @@ import java.util.*;
  * @since 2.10
  */
 public class RequestOptions {
-    /** The mode of a request. Defined in GroupRequest e.g. GET_NONE, GET_ALL */
-    private int       mode=Request.GET_NONE;
+    /** The mode of a request. Defined in {@link ResponseMode} e.g. GET_NONE, GET_ALL */
+    private ResponseMode  mode=ResponseMode.GET_NONE;
 
     /** The max time (in ms) for a blocking call. 0 blocks until all responses have been received (if mode = GET_ALL) */
-    private long      timeout; // used when mode != GET_NONE
+    private long          timeout; // used when mode != GET_NONE
 
     /** Turns on anycasting; this results in multiple unicasts rather than a multicast for group calls */
-    private boolean   use_anycasting;
+    private boolean       use_anycasting;
 
     /** Allows for filtering of responses */
-    private RspFilter rsp_filter;
+    private RspFilter     rsp_filter;
 
     /** The scope of a message, allows for concurrent delivery of messages from the same sender */
-    private short     scope;
+    private short         scope;
 
     /** The flags set in the message in which a request is sent */
-    private byte      flags; // Message.OOB, Message.DONT_BUNDLE etc
+    private short         flags; // Message.OOB, Message.DONT_BUNDLE etc
 
     /** A list of members which should be excluded from a call */
-    private Set<Address> exclusion_list;
+    private Set<Address>  exclusion_list;
 
-    /** When options are sealed, subsequent modifications will throw an exception */
-    protected boolean sealed=false;
-
-
-    @Deprecated public static final RequestOptions SYNC;
-
-    @Deprecated public static final RequestOptions ASYNC;
-
-    static {
-        SYNC=new RequestOptions(Request.GET_ALL, 5000).seal();
-        ASYNC=new RequestOptions(Request.GET_NONE, 5000).seal();
-    }
 
 
     public RequestOptions() {
     }
 
-    public RequestOptions(int mode, long timeout, boolean use_anycasting, RspFilter rsp_filter, byte flags) {
+    public RequestOptions(ResponseMode mode, long timeout, boolean use_anycasting, RspFilter rsp_filter, Message.Flag ... flags) {
+        this(mode, timeout, use_anycasting, rsp_filter,(short)0);
+        setFlags(flags);
+    }
+
+    public RequestOptions(ResponseMode mode, long timeout, boolean use_anycasting, RspFilter rsp_filter, short flags) {
         this.mode=mode;
         this.timeout=timeout;
         this.use_anycasting=use_anycasting;
@@ -57,12 +50,16 @@ public class RequestOptions {
         this.flags=flags;
     }
 
-    public RequestOptions(int mode, long timeout, boolean use_anycasting, RspFilter rsp_filter) {
-        this(mode, timeout, use_anycasting, rsp_filter, (byte)0);
+    public RequestOptions(ResponseMode mode, long timeout, boolean use_anycasting, RspFilter rsp_filter) {
+        this(mode, timeout, use_anycasting, rsp_filter, (Message.Flag[])null);
     }
 
-    public RequestOptions(int mode, long timeout) {
+    public RequestOptions(ResponseMode mode, long timeout) {
         this(mode, timeout, false, null);
+    }
+
+    public RequestOptions(ResponseMode mode, long timeout, boolean use_anycasting) {
+        this(mode, timeout, use_anycasting, null);
     }
 
     public RequestOptions(RequestOptions opts) {
@@ -73,20 +70,18 @@ public class RequestOptions {
         this.scope=opts.scope;
         this.flags=opts.flags;
         this.exclusion_list=opts.exclusion_list;
-        this.sealed=opts.sealed;
     }
 
 
-    public static RequestOptions SYNC() {return new RequestOptions(Request.GET_ALL, 5000);}
-    public static RequestOptions ASYNC() {return new RequestOptions(Request.GET_NONE, 5000);}
+    public static RequestOptions SYNC() {return new RequestOptions(ResponseMode.GET_ALL, 10000);}
+    public static RequestOptions ASYNC() {return new RequestOptions(ResponseMode.GET_NONE, 10000);}
 
 
-    public int getMode() {
+    public ResponseMode getMode() {
         return mode;
     }
 
-    public RequestOptions setMode(int mode) {
-        checkSealed();
+    public RequestOptions setMode(ResponseMode mode) {
         this.mode=mode;
         return this;
     }
@@ -96,7 +91,6 @@ public class RequestOptions {
     }
 
     public RequestOptions setTimeout(long timeout) {
-        checkSealed();
         this.timeout=timeout;
         return this;
     }
@@ -106,7 +100,6 @@ public class RequestOptions {
     }
 
     public RequestOptions setAnycasting(boolean use_anycasting) {
-        checkSealed();
         this.use_anycasting=use_anycasting;
         return this;
     }
@@ -116,7 +109,6 @@ public class RequestOptions {
     }
 
     public RequestOptions setScope(short scope) {
-        checkSealed();
         this.scope=scope;
         return this;
     }
@@ -126,24 +118,31 @@ public class RequestOptions {
     }
 
     public RequestOptions setRspFilter(RspFilter rsp_filter) {
-        checkSealed();
         this.rsp_filter=rsp_filter;
         return this;
     }
 
-    public byte getFlags() {
+    public short getFlags() {
         return flags;
     }
 
-    public RequestOptions setFlags(byte flags) {
-        checkSealed();
-        this.flags=Util.setFlag(this.flags, flags);
+    public boolean isFlagSet(Message.Flag flag) {
+        return flag != null && ((flags & flag.value()) == flag.value());
+    }
+
+    public RequestOptions setFlags(Message.Flag ... flags) {
+        if(flags != null)
+            for(Message.Flag flag: flags)
+                if(flag != null)
+                    this.flags |= flag.value();
         return this;
     }
 
-    public RequestOptions clearFlags(byte flags) {
-        checkSealed();
-        this.flags=Util.clearFlags(this.flags, flags);
+    public RequestOptions clearFlags(Message.Flag ... flags) {
+        if(flags != null)
+            for(Message.Flag flag: flags)
+                if(flag != null)
+                    this.flags &= ~flag.value();
         return this;
     }
 
@@ -159,7 +158,6 @@ public class RequestOptions {
     }
 
     public RequestOptions setExclusionList(Address ... mbrs) {
-        checkSealed();
         if(exclusion_list == null)
             exclusion_list=new HashSet<Address>();
         else
@@ -168,17 +166,10 @@ public class RequestOptions {
         return this;
     }
 
-    /** Seals options against subsequent modifications
-     * @deprecated Will get removed together with SYNC and ASYNC in 3.0*/
-    @Deprecated
-    public RequestOptions seal() {
-        sealed=true;
-        return this;
-    }
 
     public String toString() {
         StringBuilder sb=new StringBuilder();
-        sb.append("mode=" + Request.modeToString(mode));
+        sb.append("mode=" + mode);
         sb.append(", timeout=" + timeout);
         if(use_anycasting)
             sb.append(", anycasting=true");
@@ -190,9 +181,4 @@ public class RequestOptions {
         return sb.toString();
     }
 
-
-    protected void checkSealed() {
-        if(sealed)
-            throw new IllegalStateException("options are sealed, cannot modify them; use a new instance of RequestOptions");
-    }
 }

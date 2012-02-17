@@ -5,11 +5,11 @@ import org.jgroups.annotations.*;
 import org.jgroups.stack.Protocol;
 import org.jgroups.util.BoundedList;
 import org.jgroups.util.TimeScheduler;
+import org.jgroups.util.Tuple;
 import org.jgroups.util.Util;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
+import java.io.DataInput;
+import java.io.DataOutput;
 import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.Future;
@@ -26,7 +26,6 @@ import java.util.concurrent.locks.ReentrantLock;
  * @author Bela Ban
  */
 @MBean(description="Failure detection based on simple heartbeat protocol")
-@DeprecatedProperty(names={"shun"})
 public class FD_ALL extends Protocol {
     
     /* -----------------------------------------    Properties     -------------------------------------------------- */
@@ -73,17 +72,12 @@ public class FD_ALL extends Protocol {
     @GuardedBy("lock")
     private Future<?> timeout_checker_future=null;    
 
-    private final BoundedList<Address> suspect_history=new BoundedList<Address>(20);
+    private final BoundedList<Tuple<Address,Long>> suspect_history=new BoundedList<Tuple<Address,Long>>(20);
     
     private final Lock lock=new ReentrantLock();
 
 
-
-
-    public FD_ALL() {}
-    
-    
-    @ManagedAttribute(description="Member address")    
+    @ManagedAttribute(description="Member address")
     public String getLocalAddress() {return local_addr != null? local_addr.toString() : "null";}
     @ManagedAttribute(description="Lists members of a cluster")
     public String getMembers() {return members.toString();}
@@ -96,11 +90,7 @@ public class FD_ALL extends Protocol {
     public void setTimeout(long timeout) {this.timeout=timeout;}
     public long getInterval() {return interval;}
     public void setInterval(long interval) {this.interval=interval;}
-    @Deprecated
-    public static boolean isShun() {return false;}
-    @Deprecated
-    public void setShun(boolean flag) {}
-    
+
     @ManagedAttribute(description="Are heartbeat tasks running")
     public boolean isRunning() {
         lock.lock();
@@ -115,8 +105,8 @@ public class FD_ALL extends Protocol {
     @ManagedOperation(description="Prints suspect history")
     public String printSuspectHistory() {
         StringBuilder sb=new StringBuilder();
-        for(Address tmp: suspect_history) {
-            sb.append(new Date()).append(": ").append(tmp).append("\n");
+        for(Tuple<Address,Long> tmp: suspect_history) {
+            sb.append(new Date(tmp.getVal2())).append(": ").append(tmp.getVal1()).append("\n");
         }
         return sb.toString();
     }
@@ -303,7 +293,7 @@ public class FD_ALL extends Protocol {
         final List<Address> eligible_mbrs=new ArrayList<Address>();
         synchronized(this) {
             for(Address suspect: suspects) {
-                suspect_history.add(suspect);
+                suspect_history.add(new Tuple<Address,Long>(suspect, System.currentTimeMillis()));
                 suspected_mbrs.add(suspect);
             }
             eligible_mbrs.addAll(members);
@@ -329,8 +319,8 @@ public class FD_ALL extends Protocol {
         public HeartbeatHeader() {}
         public String toString() {return "heartbeat";}
         public int size() {return 0;}
-        public void writeTo(DataOutputStream out) throws IOException {}
-        public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {}
+        public void writeTo(DataOutput out) throws Exception {}
+        public void readFrom(DataInput in) throws Exception {}
     }
 
 

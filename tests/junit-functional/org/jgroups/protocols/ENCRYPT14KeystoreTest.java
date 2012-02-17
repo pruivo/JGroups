@@ -34,7 +34,6 @@ public class ENCRYPT14KeystoreTest {
         }
         catch(Exception e) {
             System.out.println("didn't find incorrect keystore (as expected): " + e.getMessage());
-            assert e.getMessage().equals("Unable to load keystore " +  "unkownKeystore.keystore" + " ensure file is on classpath");
         }
     }
 
@@ -101,7 +100,8 @@ public class ENCRYPT14KeystoreTest {
         digest.reset();
         digest.update(encrypt.getDesKey().getEncoded());
 
-        String symVersion=new String(digest.digest(), "UTF-8");
+        //String symVersion=new String(digest.digest(), "UTF-8");
+        String symVersion=ENCRYPT.byteArrayToHexString(digest.digest());
 
         Message msg=new Message(null, null, encodedBytes);
         msg.putHeader(ENCRYPT_ID, new ENCRYPT.EncryptHeader(ENCRYPT.EncryptHeader.ENCRYPT, symVersion));
@@ -138,7 +138,8 @@ public class ENCRYPT14KeystoreTest {
         digest.reset();
         digest.update(encrypt2.getDesKey().getEncoded());
 
-        String symVersion=new String(digest.digest());
+        // String symVersion=new String(digest.digest());
+        String symVersion=ENCRYPT.byteArrayToHexString(digest.digest());
 
         Message msg=new Message(null, null, encodedBytes);
         msg.putHeader(ENCRYPT_ID, new ENCRYPT.EncryptHeader(ENCRYPT.EncryptHeader.ENCRYPT, symVersion));
@@ -258,28 +259,22 @@ public class ENCRYPT14KeystoreTest {
     }
 
     static class MockAddress implements Address {
-        private static final long serialVersionUID=-2044466632514705356L;
-
-        public boolean isMulticastAddress() {
-            return false;
-        }
 
         public int size() {
             return 0;
         }
 
         public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {
-
         }
 
         public void writeExternal(ObjectOutput out) throws IOException {
         }
 
-        public void writeTo(DataOutputStream out) throws IOException {
+        public void writeTo(DataOutput out) throws Exception {
             ;
         }
 
-        public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
+        public void readFrom(DataInput in) throws Exception {
             ;
         }
 

@@ -343,15 +343,15 @@ public class RetransmitTable {
     }
 
 
-    /** Returns the number of null elements up to 'to' */
-    public int getNullMessages(long to) {
+    /** Returns the number of null elements in the range [from .. to], excluding 'from' and 'to' */
+    public int getNullMessages(long from, long to) {
         int retval=0;
-        for(long i=offset; i <= to; i++) {
+        for(long i=from+1; i < to; i++) {
             int row_index=computeRow(i);
             if(row_index < 0 || row_index >= matrix.length)
                 continue;
             Message[] row=matrix[row_index];
-            if(row != null && row[computeIndex(i)] == null)
+            if(row == null || row[computeIndex(i)] == null)
                 retval++;
         }
         return retval;
@@ -360,7 +360,8 @@ public class RetransmitTable {
 
     public String toString() {
         StringBuilder sb=new StringBuilder();
-        sb.append("size=" + size + ", capacity=" + capacity() + ", highest_purged=" + highest_seqno_purged + ", highest=" + highest_seqno);
+        sb.append("size=" + size + ", capacity=" + capacity() + ", highest=" + highest_seqno +
+                    ", highest_purged=" + highest_seqno_purged);
         return sb.toString();
     }
 
@@ -407,6 +408,28 @@ public class RetransmitTable {
         return sb.toString();
     }
 
+    /**
+     * Computes the size of all messages currently in the table. This includes messages that haven't been purged or
+     * compacted yet.
+     * @param include_headers If true, {@link org.jgroups.Message#size()} is used, which will include the size of all
+     * headers and the dest and src addresses. Else {@link org.jgroups.Message#getLength()} is used to compute.
+     * Note that the latter is way more efficient.
+     * @return Number of bytes of all messages.
+     */
+    public long sizeOfAllMessages(boolean include_headers) {
+        long retval=0;
+        for(int i=0; i < matrix.length; i++) {
+            Message[] row=matrix[i];
+            if(row == null)
+                continue;
+            for(int j=0; j < row.length; j++) {
+                Message msg=row[j];
+                if(msg != null)
+                    retval+=include_headers? msg.size() : msg.getLength();
+            }
+        }
+        return retval;
+    }
 
 
     /**

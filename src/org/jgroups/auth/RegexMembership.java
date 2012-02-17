@@ -28,9 +28,8 @@ import org.jgroups.PhysicalAddress;
 import org.jgroups.annotations.Property;
 import org.jgroups.util.UUID;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.IOException;
+import java.io.DataInput;
+import java.io.DataOutput;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -55,10 +54,6 @@ public class RegexMembership extends AuthToken {
 
     protected Pattern pattern;
 
-    private static final long serialVersionUID=4717069536900221681L;
-
-
-    
 
     public RegexMembership() {
     }
@@ -111,16 +106,16 @@ public class RegexMembership extends AuthToken {
 
    
 
-    public void writeTo(DataOutputStream out) throws IOException {
+    public void writeTo(DataOutput out) throws Exception {
     }
 
     /**
      * Required to deserialize the object when read in from the wire
+     *
+     *
      * @param in
-     * @throws java.io.IOException
-     * @throws IllegalAccessException
-     * @throws InstantiationException
+     * @throws Exception
      */
-    public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
+    public void readFrom(DataInput in) throws Exception {
     }
 }

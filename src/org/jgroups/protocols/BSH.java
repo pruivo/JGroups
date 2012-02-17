@@ -4,9 +4,7 @@ package org.jgroups.protocols;
 
 import bsh.EvalError;
 import bsh.Interpreter;
-import org.jgroups.annotations.Experimental;
-import org.jgroups.annotations.Property;
-import org.jgroups.annotations.Unsupported;
+import org.jgroups.annotations.*;
 import org.jgroups.stack.Protocol;
 import org.jgroups.util.Util;
 import org.jgroups.Global;
@@ -28,7 +26,9 @@ import java.util.List;
  * Time: 1:57:07 PM
  * @author Bela Ban
  */
-@Experimental @Unsupported
+@Experimental
+@MBean(description="Protocol which has a running Beanshell (beanshell.org) interpreter, to which clients can " +
+  "connect via TCP and submit any Java commands")
 public class BSH extends Protocol implements Runnable {
     protected Interpreter interpreter=null;
     protected ServerSocket srv_sock;
@@ -43,9 +43,14 @@ public class BSH extends Protocol implements Runnable {
     public BSH() {
     }
 
+    @ManagedAttribute(description="beanshell port",writable=false)
+    public int getCurrentPort() {
+        return srv_sock.getLocalPort();
+    }
+
     public void start() throws Exception {
-        srv_sock=Util.createServerSocket(getSocketFactory(), Global.BSH_SRV_SOCK, bind_port);
-        log.info("Server socket listening at " + srv_sock.getLocalSocketAddress());
+        srv_sock=Util.createServerSocket(getSocketFactory(), "jgroups.bsh.srv_sock", null, bind_port);
+        log.debug("Server socket listening at " + srv_sock.getLocalSocketAddress());
         acceptor=new Thread(this);
         acceptor.start();
     }

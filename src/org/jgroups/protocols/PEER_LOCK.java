@@ -10,8 +10,7 @@ import java.util.Map;
 
 import org.jgroups.Address;
 import org.jgroups.View;
-import org.jgroups.annotations.Experimental;
-import org.jgroups.blocks.locking.Owner;
+import org.jgroups.util.Owner;
 
 /**
  * Implementation of a locking protocol which acquires locks by contacting <em>all</em> of the nodes of a cluster.</p>
@@ -33,7 +32,6 @@ import org.jgroups.blocks.locking.Owner;
  * @see Locking
  * @see CENTRAL_LOCK
  */
-@Experimental
 public class PEER_LOCK extends Locking {
 
     public PEER_LOCK() {

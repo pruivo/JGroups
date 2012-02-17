@@ -8,11 +8,10 @@ import java.util.Queue;
 
 import org.jgroups.Address;
 import org.jgroups.View;
-import org.jgroups.annotations.Experimental;
 import org.jgroups.annotations.ManagedAttribute;
 import org.jgroups.annotations.Property;
 import org.jgroups.blocks.locking.LockNotification;
-import org.jgroups.blocks.locking.Owner;
+import org.jgroups.util.Owner;
 import org.jgroups.util.Util;
 
 
@@ -35,7 +34,6 @@ import org.jgroups.util.Util;
  * @see Locking
  * @see PEER_LOCK
  */
-@Experimental
 public class CENTRAL_LOCK extends Locking implements LockNotification {
 
     @Property(description="Number of backups to the coordinator. Server locks get replicated to these nodes as well")
@@ -117,7 +115,7 @@ public class CENTRAL_LOCK extends Locking implements LockNotification {
         super.handleView(view);
         Address old_coord=coord;
         if(view.size() > 0) {
-            coord=view.getMembers().firstElement();
+            coord=view.getMembers().iterator().next();
             is_coord=coord.equals(local_addr);
             if(log.isDebugEnabled())
                 log.debug("local_addr=" + local_addr + ", coord=" + coord + ", is_coord=" + is_coord);

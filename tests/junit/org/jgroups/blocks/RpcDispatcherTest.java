@@ -49,28 +49,27 @@ public class RpcDispatcherTest extends ChannelTestBase {
     // specify return values sizes which should work correctly with 64Mb heap
     final static int[] SIZES={10000, 20000, 40000, 80000, 100000, 200000, 400000, 800000,
         1000000, 2000000, 5000000};
-    // specify return value sizes which may generate timeouts or OOMEs with 64Mb heap
-    final static int[] HUGESIZES={10000000, 20000000};
 
     @BeforeMethod
     protected void setUp() throws Exception {
         c1=createChannel(true, 3);
         c1.setName("A");
         final String GROUP="RpcDispatcherTest";
-        disp1=new RpcDispatcher(c1, null, null, new ServerObject(1));
+        disp1=new RpcDispatcher(c1, new ServerObject(1));
         c1.connect(GROUP);
 
         c2=createChannel(c1);
         c2.setName("B");
-        disp2=new RpcDispatcher(c2, null, null, new ServerObject(2));
+        disp2=new RpcDispatcher(c2, new ServerObject(2));
         c2.connect(GROUP);
 
         c3=createChannel(c1);
         c3.setName("C");
-        disp3=new RpcDispatcher(c3, null, null, new ServerObject(3));
+        disp3=new RpcDispatcher(c3, new ServerObject(3));
         c3.connect(GROUP);
 
         System.out.println("c1.view=" + c1.getView() + "\nc2.view=" + c2.getView() + "\nc3.view=" + c3.getView());
+        Util.waitUntilAllChannelsHaveSameSize(30000, 1000, c1, c2, c3);
         View view=c3.getView();
         assert view.size() == 3 : "view=" + view;
     }
@@ -87,7 +86,7 @@ public class RpcDispatcherTest extends ChannelTestBase {
         RpcDispatcher d1=new RpcDispatcher(), d2=new RpcDispatcher();
         JChannel channel1=null, channel2=null;
 
-        final String GROUP=getUniqueClusterName("RpcDispatcherTest");
+        final String GROUP="RpcDispatcherTest";
         try {
             channel1=createChannel(true, 2);
             channel2=createChannel(channel1);
@@ -109,10 +108,10 @@ public class RpcDispatcherTest extends ChannelTestBase {
             System.out.println("view channel 1= " + view);
 
             assert view.size() == 2;
-            RspList rsps=d1.callRemoteMethods(null, "foo", null, null, new RequestOptions(Request.GET_ALL, 5000));
+            RspList<Integer> rsps=d1.callRemoteMethods(null, "foo", null, null, new RequestOptions(ResponseMode.GET_ALL, 5000));
             System.out.println("rsps:\n" + rsps);
             assert rsps.size() == 2;
-            for(Rsp rsp: rsps.values()) {
+            for(Rsp<Integer> rsp: rsps.values()) {
                 assert rsp.wasReceived();
                 assert !rsp.wasSuspected();
                 assert rsp.getValue() != null;
@@ -127,7 +126,7 @@ public class RpcDispatcherTest extends ChannelTestBase {
             d1.setServerObject(server_object);
             d2.setServerObject(server_object);
 
-            rsps=d2.callRemoteMethods(null, "foobar", null, null, new RequestOptions(Request.GET_ALL, 5000));
+            rsps=d2.callRemoteMethods(null, "foobar", null, null, new RequestOptions(ResponseMode.GET_ALL, 5000));
             System.out.println("rsps:\n" + rsps);
             assert rsps.size() == 2;
             for(Rsp rsp: rsps.values()) {
@@ -144,6 +143,65 @@ public class RpcDispatcherTest extends ChannelTestBase {
     }
 
 
+    public void testException() throws Exception {
+        RspList<Object> rsps=disp1.callRemoteMethods(null, "throwException", null, null, new RequestOptions(ResponseMode.GET_ALL, 5000));
+        for(Rsp<Object> rsp: rsps.values()) {
+            System.out.println(rsp);
+        }
+        for(Rsp<Object> rsp: rsps.values()) {
+            assert rsp.getException() != null && rsp.getValue() == null;
+        }
+    }
+
+
+    public void testExceptionAsReturnValue() throws Exception {
+        RspList<Object> rsps=disp1.callRemoteMethods(null, "returnException", null, null, new RequestOptions(ResponseMode.GET_ALL, 5000));
+        for(Rsp<Object> rsp: rsps.values()) {
+            System.out.println(rsp);
+        }
+        for(Rsp<Object> rsp: rsps.values()) {
+            assert rsp.getException() == null && rsp.getValue() != null && rsp.getValue() instanceof Throwable;
+        }
+    }
+
+
+    public void testUnicastException()  {
+        try {
+            disp1.callRemoteMethod(c2.getAddress(), "throwException", null, null, new RequestOptions(ResponseMode.GET_ALL, 5000));
+        }
+        catch(Throwable throwable) {
+            System.out.println("received exception (as expected)");
+        }
+    }
+
+    public void testUnicastExceptionWithFuture()  {
+        try {
+            MethodCall call=new MethodCall(ServerObject.class.getMethod("throwException"));
+            Future<Object> future=disp1.callRemoteMethodWithFuture(c2.getAddress(), call, new RequestOptions(ResponseMode.GET_ALL, 5000));
+            Object val=future.get();
+            assert val == null;
+            assert false : " should not get here";
+        }
+        catch(Throwable throwable) {
+            System.out.println("received exception (as expected): " + throwable);
+        }
+    }
+
+
+    public void testUnicastExceptionAsReturnValue() throws Exception {
+        Object rsp=disp1.callRemoteMethod(c2.getAddress(), "returnException", null, null, new RequestOptions(ResponseMode.GET_ALL, 5000));
+        System.out.println("rsp = " + rsp);
+        assert rsp != null && rsp instanceof Throwable;
+    }
+
+    public void testUnicastExceptionAsReturnValueWithFuture() throws Exception {
+        MethodCall call=new MethodCall(ServerObject.class.getMethod("returnException"));
+        Future<Object> future=disp1.callRemoteMethodWithFuture(c2.getAddress(), call, new RequestOptions(ResponseMode.GET_ALL, 5000));
+        Object val=future.get();
+        assert val instanceof Exception;
+    }
+
+
     /**
      * Test the response filter mechanism which can be used to filter responses received with
      * a call to RpcDispatcher.
@@ -155,11 +213,8 @@ public class RpcDispatcherTest extends ChannelTestBase {
      * from servers 2 and 3 are accepted.
      *
      */
-    public void testResponseFilter() {
-    	
-    	final long timeout = 10 * 1000 ;
-
-        RequestOptions options=new RequestOptions(Request.GET_ALL, timeout, false,
+    public void testResponseFilter() throws Exception {
+        RequestOptions options=new RequestOptions(ResponseMode.GET_ALL, 10000, false,
                                                   new RspFilter() {
                                                       int num=0;
                                                       public boolean isAcceptable(Object response, Address sender) {
@@ -180,11 +235,50 @@ public class RpcDispatcherTest extends ChannelTestBase {
         assertEquals("number of responses received should be 2", 2, rsps.numReceived());
     }
 
+    /**
+     * Tests an incorrect response filter which always returns false for isAcceptable() and true for needsMoreResponses().
+     * The call should return anyway after having received all responses, even if none of them was accepted by the
+     * filter.
+     */
+    public void testNonTerminatingResponseFilter() throws Exception {
+        RequestOptions options=new RequestOptions(ResponseMode.GET_ALL, 10000, false,
+                                                  new RspFilter() {
+                                                      public boolean isAcceptable(Object response, Address sender) {
+                                                          return false;
+                                                      }
+                                                      public boolean needMoreResponses() {return true;}
+                                                  });
+
+        RspList rsps=disp1.callRemoteMethods(null, "foo", null, null, options);
+        System.out.println("responses are:\n" + rsps);
+        assertEquals("there should be three response values", 3, rsps.size());
+        assertEquals("number of responses received should be 3", 0, rsps.numReceived());
+    }
+
+    /**
+     * Runs with response mode of GET_FIRST and the response filter accepts only the last response
+     * @throws Exception
+     */
+    public void testAcceptLastResponseFilter() throws Exception {
+        RequestOptions options=new RequestOptions(ResponseMode.GET_FIRST, 10000, false,
+                                                  new RspFilter() {
+                                                      int count=0;
+                                                      public boolean isAcceptable(Object response, Address sender) {
+                                                          return ++count >= 3;
+                                                      }
+                                                      public boolean needMoreResponses() {return count < 3;}
+                                                  });
+
+        RspList rsps=disp1.callRemoteMethods(null, "foo", null, null, options);
+        System.out.println("responses are:\n" + rsps);
+        assertEquals("there should be three response values", 3, rsps.size());
+        assertEquals("number of responses received should be 3", 1, rsps.numReceived());
+    }
+
 
     public void testFuture() throws Exception {
         MethodCall sleep=new MethodCall("sleep", new Object[]{1000L}, new Class[]{long.class});
-        Future<RspList> future;
-        future=disp1.callRemoteMethodsWithFuture(null, sleep, new RequestOptions(Request.GET_ALL, 5000L, false, null));
+        Future<RspList<Object>> future=disp1.callRemoteMethodsWithFuture(null, sleep, new RequestOptions(ResponseMode.GET_ALL, 5000L, false, null));
         assert !future.isDone();
         assert !future.isCancelled();
         try {
@@ -207,16 +301,15 @@ public class RpcDispatcherTest extends ChannelTestBase {
 
     public void testNotifyingFuture() throws Exception {
         MethodCall sleep=new MethodCall("sleep", new Object[]{1000L}, new Class[]{long.class});
-        NotifyingFuture<RspList> future;
-        MyFutureListener<RspList> listener=new MyFutureListener<RspList>();
-        future=disp1.callRemoteMethodsWithFuture(null, sleep, new RequestOptions(Request.GET_ALL, 5000L, false, null));
+        MyFutureListener<RspList<Long>> listener=new MyFutureListener<RspList<Long>>();
+        NotifyingFuture<RspList<Long>> future=disp1.callRemoteMethodsWithFuture(null, sleep, new RequestOptions(ResponseMode.GET_ALL, 5000L, false, null));
         future.setListener(listener);
         assert !future.isDone();
         assert !future.isCancelled();
         assert !listener.isDone();
         Util.sleep(2000);
         assert listener.isDone();
-        RspList result=future.get(1L, TimeUnit.MILLISECONDS);
+        RspList<Long> result=future.get(1L, TimeUnit.MILLISECONDS);
         System.out.println("result:\n" + result);
         assert result != null;
         assert result.size() == 3;
@@ -225,9 +318,9 @@ public class RpcDispatcherTest extends ChannelTestBase {
 
     public void testNotifyingFutureWithDelayedListener() throws Exception {
         MethodCall sleep=new MethodCall("sleep", new Object[]{1000L}, new Class[]{long.class});
-        NotifyingFuture<RspList> future;
-        MyFutureListener<RspList> listener=new MyFutureListener<RspList>();
-        future=disp1.callRemoteMethodsWithFuture(null, sleep, new RequestOptions(Request.GET_ALL, 5000L, false, null));
+        NotifyingFuture<RspList<Long>> future;
+        MyFutureListener<RspList<Long>> listener=new MyFutureListener<RspList<Long>>();
+        future=disp1.callRemoteMethodsWithFuture(null, sleep, new RequestOptions(ResponseMode.GET_ALL, 5000L, false, null));
         assert !future.isDone();
         assert !future.isCancelled();
 
@@ -244,19 +337,19 @@ public class RpcDispatcherTest extends ChannelTestBase {
 
     public void testMultipleFutures() throws Exception {
         MethodCall sleep=new MethodCall("sleep", new Object[]{100L}, new Class[]{long.class});
-        List<Future<RspList>> futures=new ArrayList<Future<RspList>>();
+        List<Future<RspList<Long>>> futures=new ArrayList<Future<RspList<Long>>>();
         long target=System.currentTimeMillis() + 30000L;
 
-        Future<RspList> future;
-        RequestOptions options=new RequestOptions(Request.GET_ALL, 30000L, false, null);
+        Future<RspList<Long>> future;
+        RequestOptions options=new RequestOptions(ResponseMode.GET_ALL, 30000L, false, null);
         for(int i=0; i < 10; i++) {
             future=disp1.callRemoteMethodsWithFuture(null, sleep, options);
             futures.add(future);
         }
 
-        List<Future<RspList>> rsps=new ArrayList<Future<RspList>>();
+        List<Future<RspList<Long>>> rsps=new ArrayList<Future<RspList<Long>>>();
         while(!futures.isEmpty() && System.currentTimeMillis() < target) {
-            for(Iterator<Future<RspList>> it=futures.iterator(); it.hasNext();) {
+            for(Iterator<Future<RspList<Long>>> it=futures.iterator(); it.hasNext();) {
                 future=it.next();
                 if(future.isDone()) {
                     it.remove();
@@ -267,25 +360,27 @@ public class RpcDispatcherTest extends ChannelTestBase {
             Util.sleep(200);
         }
         System.out.println("\n" + rsps.size() + " responses:\n");
-        for(Future<RspList> tmp: rsps) {
+        for(Future<RspList<Long>> tmp: rsps) {
             System.out.println(tmp);
         }
     }
 
     public void testMultipleNotifyingFutures() throws Exception {
         MethodCall sleep=new MethodCall("sleep", new Object[]{100L}, new Class[]{long.class});
-        List<MyFutureListener> listeners=new ArrayList<MyFutureListener>();
-        RequestOptions options=new RequestOptions(Request.GET_ALL, 30000L, false, null);
+        List<MyFutureListener<RspList<Long>>> listeners=new ArrayList<MyFutureListener<RspList<Long>>>();
+        RequestOptions options=new RequestOptions(ResponseMode.GET_ALL, 30000L, false, null);
         for(int i=0; i < 10; i++) {
-            MyFutureListener<RspList> listener=new MyFutureListener<RspList>();
+            MyFutureListener<RspList<Long>> listener=new MyFutureListener<RspList<Long>>();
             listeners.add(listener);
-            disp1.callRemoteMethodsWithFuture(null, sleep, options).setListener(listener);
+            // NotifyingFuture<RspList<Long>> futures=disp1.callRemoteMethodsWithFuture(null, sleep, options);
+            NotifyingFuture<RspList<Long>> futures=disp1.callRemoteMethodsWithFuture(null, sleep, options);
+            futures.setListener(listener);
         }
 
         Util.sleep(1000);
         for(int i=0; i < 10; i++) {
             boolean all_done=true;
-            for(MyFutureListener listener: listeners) {
+            for(MyFutureListener<RspList<Long>> listener: listeners) {
                 boolean done=listener.isDone();
                 System.out.print(done? "+ " : "- ");
                 if(!listener.isDone())
@@ -308,15 +403,14 @@ public class RpcDispatcherTest extends ChannelTestBase {
 
     public void testFutureCancel() throws Exception {
         MethodCall sleep=new MethodCall("sleep", new Object[]{1000L}, new Class[]{long.class});
-        Future<RspList> future;
-        future=disp1.callRemoteMethodsWithFuture(null, sleep, new RequestOptions(Request.GET_ALL, 5000L));
+        NotifyingFuture<RspList<Long>> future=disp1.callRemoteMethodsWithFuture(null, sleep, new RequestOptions(ResponseMode.GET_ALL, 5000L));
         assert !future.isDone();
         assert !future.isCancelled();
         future.cancel(true);
         assert future.isDone();
         assert future.isCancelled();
 
-        future=disp1.callRemoteMethodsWithFuture(null, sleep, new RequestOptions(Request.GET_ALL, 0));
+        future=disp1.callRemoteMethodsWithFuture(null, sleep, new RequestOptions(ResponseMode.GET_ALL, 0));
         assert !future.isDone();
         assert !future.isCancelled();
         future.cancel(true);
@@ -336,7 +430,7 @@ public class RpcDispatcherTest extends ChannelTestBase {
      * The expected behaviour is that all RPC requests complete successfully.
      *
      */
-    public void testLargeReturnValue() {
+    public void testLargeReturnValue() throws Exception {
         setProps(c1, c2, c3);
         for(int i=0; i < SIZES.length; i++) {
             _testLargeValue(SIZES[i]);
@@ -368,13 +462,13 @@ public class RpcDispatcherTest extends ChannelTestBase {
     /**
      * Tests a method call to {A,B,C} where C left *before* the call. http://jira.jboss.com/jira/browse/JGRP-620
      */
-    public void testMethodInvocationToNonExistingMembers() {
+    public void testMethodInvocationToNonExistingMembers() throws Exception {
     	
     	final int timeout = 5 * 1000 ;
     	
     	// get the current membership, as seen by C
         View view=c3.getView();
-        Vector<Address> members=view.getMembers();
+        List<Address> members=view.getMembers();
         System.out.println("list is " + members);
 
         // cause C to leave the group and close its channel
@@ -385,11 +479,11 @@ public class RpcDispatcherTest extends ChannelTestBase {
         
         // make an RPC call using C's now outdated view of membership
         System.out.println("calling method foo() in " + members + " (view=" + c2.getView() + ")");
-        RspList rsps=disp1.callRemoteMethods(members, "foo", null, null, new RequestOptions(Request.GET_ALL, timeout));
+        RspList<Object> rsps=disp1.callRemoteMethods(members, "foo", null, null, new RequestOptions(ResponseMode.GET_ALL, timeout));
         
         // all responses 
         System.out.println("responses:\n" + rsps);
-        for(Map.Entry<Address,Rsp> entry: rsps.entrySet()) {
+        for(Map.Entry<Address,Rsp<Object>> entry: rsps.entrySet()) {
             Rsp rsp=entry.getValue();
             assertTrue("response from " + entry.getKey() + " was not received", rsp.wasReceived());
             assertFalse(rsp.wasSuspected());
@@ -408,7 +502,7 @@ public class RpcDispatcherTest extends ChannelTestBase {
      * The expected behaviour is that all RPC requests complete successfully.
      *
      */
-    public void testLargeReturnValueUnicastCall() throws Throwable {
+    public void testLargeReturnValueUnicastCall() throws Exception {
         setProps(c1, c2, c3);
         for(int i=0; i < SIZES.length; i++) {
             _testLargeValueUnicastCall(c1.getAddress(), SIZES[i]);
@@ -440,19 +534,19 @@ public class RpcDispatcherTest extends ChannelTestBase {
      * The method checks that each returned value is non-null and has the correct size. 
      *    
      */
-    void _testLargeValue(int size) {
+    void _testLargeValue(int size) throws Exception {
     	
     	// 20 second timeout 
     	final long timeout = 20 * 1000 ;
     		
         System.out.println("\ntesting with " + size + " bytes");
-        RspList rsps=disp1.callRemoteMethods(null, "largeReturnValue", new Object[]{size}, new Class[]{int.class},
-                                             new RequestOptions(Request.GET_ALL, timeout));
+        RspList<Object> rsps=disp1.callRemoteMethods(null, "largeReturnValue", new Object[]{size}, new Class[]{int.class},
+                                             new RequestOptions(ResponseMode.GET_ALL, timeout));
         System.out.println("rsps:");
         assert rsps.size() == 3 : "there should be three responses to the RPC call but only " + rsps.size() +
                 " were received: " + rsps;
         
-        for(Map.Entry<Address,Rsp> entry: rsps.entrySet()) {
+        for(Map.Entry<Address,Rsp<Object>> entry: rsps.entrySet()) {
         	
         	// its possible that an exception was raised in processing
         	Object obj = entry.getValue().getValue() ;
@@ -476,14 +570,14 @@ public class RpcDispatcherTest extends ChannelTestBase {
      * reasonable values. 
      * 
      */
-    void _testHugeValue(int size) {
+    void _testHugeValue(int size) throws Exception {
     	
     	// 20 second timeout 
     	final long timeout = 20 * 1000 ;
     	
         System.out.println("\ntesting with " + size + " bytes");
-        RspList rsps=disp1.callRemoteMethods(null, "largeReturnValue", new Object[]{size}, new Class[]{int.class},
-                                             new RequestOptions(Request.GET_ALL, timeout));
+        RspList<Object> rsps=disp1.callRemoteMethods(null, "largeReturnValue", new Object[]{size}, new Class[]{int.class},
+                                                     new RequestOptions(ResponseMode.GET_ALL, timeout));
         System.out.println("rsps:");
         assert rsps != null;
         assert rsps.size() == 3 : "there should be three responses to the RPC call but only " + rsps.size() +
@@ -491,7 +585,7 @@ public class RpcDispatcherTest extends ChannelTestBase {
 
         // in checking the return values, we need to take account of timeouts (i.e. when
         // a null value is returned) and exceptions 
-        for(Map.Entry<Address,Rsp> entry: rsps.entrySet()) {
+        for(Map.Entry<Address,Rsp<Object>> entry: rsps.entrySet()) {
 
         	Object obj = entry.getValue().getValue() ;
 
@@ -526,25 +620,17 @@ public class RpcDispatcherTest extends ChannelTestBase {
      * 
      * @param dst the group member
      * @param size the size of the byte array to be returned
-     * @throws Throwable
      */
-    void _testLargeValueUnicastCall(Address dst, int size) throws Throwable {
+    void _testLargeValueUnicastCall(Address dst, int size) throws Exception {
     	
     	// 20 second timeout
     	final long timeout = 20 * 1000 ;
     	
         System.out.println("\ntesting unicast call with " + size + " bytes");
         assertNotNull(dst);
-        
-        Object retval=disp1.callRemoteMethod(dst, "largeReturnValue", new Object[]{size}, new Class[]{int.class},
-                                             new RequestOptions(Request.GET_ALL, timeout));
 
-    	// it's possible that an exception was raised
-        if (retval instanceof java.lang.Throwable) {
-        	throw (Throwable)retval;
-        }
-        
-        byte[] val=(byte[])retval;
+        byte[] val=disp1.callRemoteMethod(dst, "largeReturnValue", new Object[]{size}, new Class[]{int.class},
+                                             new RequestOptions(ResponseMode.GET_ALL, timeout));
         
         // check value is not null, otherwise fail the test
         assertNotNull("return value should be non-null", val);
@@ -574,7 +660,17 @@ public class RpcDispatcherTest extends ChannelTestBase {
             // System.out.println("sleep()");
             long start=System.currentTimeMillis();
             Util.sleep(timeout);
+            //throw new NullPointerException("boom");
             return System.currentTimeMillis() - start;
+        }
+
+
+        public static void throwException() throws Exception {
+            throw new Exception("booom");
+        }
+
+        public static Exception returnException() {
+            return new Exception("booom");
         }
 
 

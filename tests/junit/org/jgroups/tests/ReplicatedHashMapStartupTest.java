@@ -14,13 +14,11 @@ import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Vector;
 
 /**
  * Tests concurrent startup or replicated hashmap.
  * 
  * @author vlada
- *          belaban Exp $
  */
 @Test(groups= { Global.FLUSH }, sequential=true)
 public class ReplicatedHashMapStartupTest extends ChannelTestBase {
@@ -32,10 +30,8 @@ public class ReplicatedHashMapStartupTest extends ChannelTestBase {
         }
         catch(Exception e) {
             log.warn("Exception while running testConcurrentStartup4Members", e);
-            for(ReplicatedHashMap<Address,Integer> map:channels) {
+            for(ReplicatedHashMap<Address,Integer> map: channels)
                 map.stop();
-                Util.sleep(1000);
-            }
         }
     }
 
@@ -46,10 +42,8 @@ public class ReplicatedHashMapStartupTest extends ChannelTestBase {
         }
         catch(Exception e) {
             log.warn("Exception while running testConcurrentStartup8Members", e);
-            for(ReplicatedHashMap<Address,Integer> map:channels) {
+            for(ReplicatedHashMap<Address,Integer> map: channels)
                 map.stop();
-                Util.sleep(1000);
-            }
         }
     }
 
@@ -74,7 +68,7 @@ public class ReplicatedHashMapStartupTest extends ChannelTestBase {
             map.setBlockingUpdates(true);
         }
 
-        //do a very concurrent startup
+        // do a very concurrent startup
         for(ReplicatedHashMap<Address,Integer> map:channels) {
             map.getChannel().connect("ReplicatedHashMapStartupTest");
             map.start(0);
@@ -91,25 +85,20 @@ public class ReplicatedHashMapStartupTest extends ChannelTestBase {
             }
         }
 
-        //verify all view are correct
-        for(ReplicatedHashMap<Address,Integer> map:channels) {
+        // verify all view are correct
+        for(ReplicatedHashMap<Address,Integer> map:channels)
             Assert.assertEquals(map.getChannel().getView().size(), channelCount, "Correct view");
-        }
 
-        for(ReplicatedHashMap<Address,Integer> map:channels) {
+        for(ReplicatedHashMap<Address,Integer> map:channels)
             map.removeNotifier(n);
-        }
 
         //verify all maps have all elements
-        for(ReplicatedHashMap<Address,Integer> map:channels) {
+        for(ReplicatedHashMap<Address,Integer> map:channels)
             Assert.assertEquals(map.size(), channelCount, "Correct size");
-        }
 
         log.info("stopping replicated hash maps...");
-        for(ReplicatedHashMap<Address,Integer> map:channels) {
+        for(ReplicatedHashMap<Address,Integer> map:channels)
             map.stop();
-            Util.sleep(1000);
-        }
     }
 
     private static void modifyGMS(JChannel c) {
@@ -119,7 +108,7 @@ public class ReplicatedHashMapStartupTest extends ChannelTestBase {
             gms.setLogCollectMessages(false);
     }
 
-    private class MyNotification<K extends Serializable, V extends Serializable> implements
+    private class MyNotification<K, V> implements
             org.jgroups.blocks.ReplicatedHashMap.Notification<K,V> {
 
         public void contentsCleared() {}
@@ -130,7 +119,7 @@ public class ReplicatedHashMapStartupTest extends ChannelTestBase {
 
         public void entrySet(K key, V value) {}
 
-        public void viewChange(View view, Vector<Address> new_mbrs, Vector<Address> old_mbrs) {
+        public void viewChange(View view, List<Address> new_mbrs, List<Address> old_mbrs) {
             log.info("Got view in ReplicatedHashMap notifier " + view);
         }
     }

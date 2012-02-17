@@ -49,20 +49,32 @@ public class AgeOutCacheTest {
 
     @Test(dataProvider="timerCreator")
     public void testRemoveAndExpiration(TimeScheduler timer) {
-        AgeOutCache<Integer> cache = new AgeOutCache<Integer>(timer, 500L);
+        AgeOutCache<Integer> cache = new AgeOutCache<Integer>(timer, 2000L);
         for (int i = 1; i <= 5; i++)
             cache.add(i);
         System.out.println("cache:\n" + cache);
         cache.remove(3);
         cache.remove(5);
         cache.remove(6); // not existent
-        System.out.println("cache:\n" + cache);
-        assert cache.size() == 3 : "cache size should be 3 but is " + cache;
+
+        boolean correct_size=false;
+        for(int i=0; i < 20; i++) {
+            if(cache.size() == 3) {
+                correct_size=true;
+                break;
+            }
+            Util.sleep(500);
+        }
+
+        if(!correct_size) {
+            System.out.println("cache:\n" + cache);
+            assert cache.size() == 3 : "cache size should be 3 but is " + cache.size();
+        }
 
         for(int i=0; i < 10; i++) {
             if(cache.size() == 0)
                 break;
-            Util.sleep(500);
+            Util.sleep(1000);
         }
 
         assert cache.size() == 0;

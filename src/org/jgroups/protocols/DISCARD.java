@@ -13,6 +13,7 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.io.*;
 import java.util.*;
+import java.util.List;
 
 
 /**
@@ -44,13 +45,13 @@ public class DISCARD extends Protocol {
 
     final Collection<Address> members=new ArrayList<Address>();
 
-    @ManagedAttribute(description="drop all messages (up or down)", writable=true)
+    @Property(description="drop all messages (up or down)",writable=true)
     boolean discard_all=false;
 
-    @ManagedAttribute(description="Number of subsequent unicasts to drop in the down direction",writable=true)
+    @Property(description="Number of subsequent unicasts to drop in the down direction",writable=true)
     int drop_down_unicasts=0;
 
-    @ManagedAttribute(description="Number of subsequent multicasts to drop in the down direction",writable=true)
+    @Property(description="Number of subsequent multicasts to drop in the down direction",writable=true)
     int drop_down_multicasts=0;
 
     private DiscardDialog discard_dialog=null;
@@ -217,13 +218,13 @@ public class DISCARD extends Protocol {
             case Event.MSG:
             msg=(Message)evt.getArg();
             Address dest=msg.getDest();
-            boolean multicast=dest == null || dest.isMulticastAddress();
+            boolean multicast=dest == null;
 
             if(msg.getSrc() == null)
                 msg.setSrc(localAddress);
 
             if(discard_all) {
-                if(dest == null || dest.isMulticastAddress() || dest.equals(localAddress)) {
+                if(dest == null || dest.equals(localAddress)) {
                     //System.out.println("[" + localAddress + "] down(): looping back " + msg + ", hdrs:\n" + msg.getHeaders());
                     loopback(msg);
                 }
@@ -257,7 +258,7 @@ public class DISCARD extends Protocol {
                 break;
             case Event.VIEW_CHANGE:
                 View view=(View)evt.getArg();
-                Vector<Address> mbrs=view.getMembers();
+                List<Address> mbrs=view.getMembers();
                 members.clear();
                 members.addAll(mbrs);
                 ignoredMembers.retainAll(mbrs); // remove all non members
@@ -308,7 +309,7 @@ public class DISCARD extends Protocol {
 			this.dropMessages= ignoredAddresses;
 		}
 
-		public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
+		public void readFrom(DataInput in) throws Exception {
 			int size = in.readShort();
 			if (size > 0) {
 				dropMessages.clear();
@@ -318,7 +319,7 @@ public class DISCARD extends Protocol {
 			}
 		}
 
-		public void writeTo(DataOutputStream out) throws IOException {
+		public void writeTo(DataOutput out) throws Exception {
 			if (dropMessages != null && !dropMessages.isEmpty()) {
 				out.writeShort(dropMessages.size());
 				for (Address addr: dropMessages) {

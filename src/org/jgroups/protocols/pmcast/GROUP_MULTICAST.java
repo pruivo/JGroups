@@ -261,7 +261,7 @@ public class GROUP_MULTICAST extends Protocol {
             case Event.MSG:
                 Message msg=(Message)evt.getArg();
                 Address addr = msg.getDest();
-                if(addr != null && addr.isGroupAddress()) {
+                if(addr != null && addr instanceof GroupAddress) {
                     Set<Address> destination = ((GroupAddress)addr).getAddresses();
                     View view = actualView.get();
                     destination.retainAll(view.getMembers());

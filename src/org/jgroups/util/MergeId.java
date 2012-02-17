@@ -3,9 +3,8 @@ package org.jgroups.util;
 import org.jgroups.Address;
 import org.jgroups.Global;
 
-import java.io.DataOutputStream;
-import java.io.IOException;
-import java.io.DataInputStream;
+import java.io.DataInput;
+import java.io.DataOutput;
 
 /** ID to uniquely identify a merge
  * @author Bela Ban
@@ -23,9 +22,10 @@ public class MergeId implements Streamable {
     }
 
     public synchronized static MergeId create(Address addr) {
-        int id=LAST_ID++;
         if(addr == null)
             throw new IllegalArgumentException("initiator has to be non null");
+
+        int id=LAST_ID++;
         return new MergeId(addr, id);
     }
 
@@ -41,12 +41,12 @@ public class MergeId implements Streamable {
         return Util.size(initiator) + Global.INT_SIZE;
     }
 
-    public void writeTo(DataOutputStream out) throws IOException {
+    public void writeTo(DataOutput out) throws Exception {
         Util.writeAddress(initiator, out);
         out.writeInt(id);
     }
 
-    public void readFrom(DataInputStream in) throws IOException, IllegalAccessException, InstantiationException {
+    public void readFrom(DataInput in) throws Exception {
         initiator=Util.readAddress(in);
         id=in.readInt();
     }

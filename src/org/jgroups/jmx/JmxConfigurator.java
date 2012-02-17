@@ -1,7 +1,6 @@
 package org.jgroups.jmx;
 
 import org.jgroups.JChannel;
-import org.jgroups.JChannelFactory;
 import org.jgroups.annotations.MBean;
 import org.jgroups.annotations.ManagedAttribute;
 import org.jgroups.annotations.ManagedOperation;
@@ -44,6 +43,8 @@ public class JmxConfigurator {
         if (cluster_name == null)
             cluster_name = "null";
 
+        cluster_name=ObjectName.quote(cluster_name);
+
         if (register_protocols) {
             ProtocolStack stack = channel.getProtocolStack();
             List<Protocol> protocols = stack.getProtocols();
@@ -65,7 +66,7 @@ public class JmxConfigurator {
      * 
      * @param channel
      * @param server
-     * @param domain
+     * @param name
      *            Has to be a JMX ObjectName of the domain, e.g. DefaultDomain:name=JGroups
      */
     public static void registerChannel(JChannel channel, MBeanServer server, String name)
@@ -91,6 +92,9 @@ public class JmxConfigurator {
     public static void unregisterChannel(JChannel c, MBeanServer server, String domain, String clusterName)
                     throws Exception {
 
+        if(clusterName != null)
+            clusterName=ObjectName.quote(clusterName);
+
         ProtocolStack stack = c.getProtocolStack();
         List<Protocol> protocols = stack.getProtocols();
         for (Protocol p : protocols) {
@@ -107,15 +111,6 @@ public class JmxConfigurator {
         unregister(c, server, getChannelRegistrationName(c, domain, clusterName));
     }
 
-    public static void registerChannelFactory(JChannelFactory factory, MBeanServer server,
-                    String name) throws Exception {
-        register(factory, server, name);
-    }
-
-    public static void unRegisterChannelFactory(JChannelFactory factory, MBeanServer server,
-                    String name) throws Exception {
-        unregister(factory, server, name);
-    }
 
     public static void register(Object obj, MBeanServer server, String name)
                     throws MBeanRegistrationException, MalformedObjectNameException {
@@ -127,17 +122,7 @@ public class JmxConfigurator {
         internalUnregister(obj, server, name);
     }
 
-    @Deprecated
-    public DynamicMBean asDynamicMBean(JChannel ch) {
-        return new ResourceDMBean(ch);
-    }
 
-    @Deprecated
-    public DynamicMBean asDynamicMBean(Protocol p) {
-        return new ResourceDMBean(p);
-    }
-    
-    
     
     /**
      * Wrap JChannel with DynamicMBean interface. All annotated attributes and methods will be
@@ -177,6 +162,17 @@ public class JmxConfigurator {
 
         try {
             ObjectName objName = getObjectName(obj, name);
+            if(server.isRegistered(objName)) {
+                if(log.isWarnEnabled())
+                    log.warn("unregistering already registered MBean: " + objName);
+                try {
+                    server.unregisterMBean(objName);
+                }
+                catch(InstanceNotFoundException e) {
+                    log.error("failed to unregister MBean " + e.getMessage());
+                }
+            }
+
             ResourceDMBean res = new ResourceDMBean(obj);
             server.registerMBean(res, objName);
         } catch (InstanceAlreadyExistsException e) {
@@ -217,19 +213,18 @@ public class JmxConfigurator {
         }
     }
 
-    private static ObjectName getObjectName(Object obj, String name)
-                    throws MalformedObjectNameException {
+    private static ObjectName getObjectName(Object obj, String name) throws MalformedObjectNameException {
         MBean resource = obj.getClass().getAnnotation(MBean.class);
         if (name != null && name.length() > 0) {
             return new ObjectName(name);
         } else if (resource.objectName() != null && resource.objectName().length() > 0) {
             return new ObjectName(resource.objectName());
         } else {
-            throw new MalformedObjectNameException("Instance " + obj + " of a class "
-                            + obj.getClass() + " does not have a valid object name");
+            throw new MalformedObjectNameException(obj + " of class " + obj.getClass() + " has an invalid object name");
         }
     }
 
+  
     /**
      * Unregisters object_name and everything under it
      * 

@@ -1,6 +1,5 @@
 
 
-
 package org.jgroups;
 
 import org.jgroups.annotations.Immutable;
@@ -19,10 +18,10 @@ import org.jgroups.annotations.Immutable;
  */
 @Immutable
 public class Version {
-    public static final short major = 2;
-    public static final short minor = 12;
-    public static final short micro = 0;
-    public static final String description="2.12.0.1.Final + Total Order Group Multicast";
+    public static final short major = 3;
+    public static final short minor = 0;
+    public static final short micro = 4;
+    public static final String description="3.0.4.Final + TO Multicast";
 
     public static final short version=encode(major, minor, micro);
     public static final String string_version=print(version);
@@ -32,7 +31,7 @@ public class Version {
     private static final int MAJOR_MASK  = 0x00f800; // 1111100000000000 bit mask
     private static final int MINOR_MASK  = 0x0007c0; //      11111000000 bit mask
     private static final int MICRO_MASK  = 0x00003f; //           111111 bit mask
-    
+
 
 
     /**

@@ -3,7 +3,6 @@ package org.jgroups.protocols;
 
 import org.jgroups.Global;
 import org.jgroups.PhysicalAddress;
-import org.jgroups.annotations.DeprecatedProperty;
 import org.jgroups.annotations.Property;
 import org.jgroups.stack.IpAddress;
 import org.jgroups.util.Util;
@@ -40,7 +39,6 @@ import java.util.Map;
  * 
  * @author Bela Ban
  */
-@DeprecatedProperty(names={"num_last_ports","null_src_addresses", "send_on_all_interfaces", "send_interfaces"})
 public class UDP extends TP {
 
     /* ------------------------------------------ Properties  ------------------------------------------ */
@@ -86,7 +84,8 @@ public class UDP extends TP {
     @Property(description="Receive buffer size of the unicast datagram socket. Default is 64'000 bytes")
     protected int ucast_recv_buf_size=64000;
 
-    @Property
+    @Property(description="If true, disables IP_MULTICAST_LOOP on the MulticastSocket (for sending and receiving of " +
+      "multicast packets). IP multicast packets send on a host P will therefore not be received by anyone on P. Use with caution.")
     protected boolean disable_loopback=false;
 
 
@@ -128,13 +127,6 @@ public class UDP extends TP {
     // private boolean null_src_addresses=true;
 
 
-
-    /**
-     * Creates the UDP protocol, and initializes the state variables, does however not start any sockets or threads.
-     */
-    public UDP() {
-    }
-
     public boolean supportsMulticasting() {
         return ip_mcast;
     }
@@ -163,6 +155,13 @@ public class UDP extends TP {
         return this.ip_ttl;
     }
 
+    @Property(name="max_bundle_size", description="Maximum number of bytes for messages to be queued until they are sent")
+    public void setMaxBundleSize(int size) {
+        super.setMaxBundleSize(size);
+        if(size > Global.MAX_DATAGRAM_PACKET_SIZE)
+            throw new IllegalArgumentException("max_bundle_size (" + size + ") cannot exceed the max datagram " +
+                                                 "packet size of " + Global.MAX_DATAGRAM_PACKET_SIZE);
+    }
 
     public String getInfo() {
         StringBuilder sb=new StringBuilder();
@@ -222,17 +221,8 @@ public class UDP extends TP {
      * Creates the unicast and multicast sockets and starts the unicast and multicast receiver threads
      */
     public void start() throws Exception {
-        if(log.isDebugEnabled()) log.debug("creating sockets");
-        try {
-            createSockets();
-        }
-        catch(Exception ex) {
-            String tmp="problem creating sockets (bind_addr=" + bind_addr + ", mcast_addr=" + mcast_addr + ")";
-            throw new Exception(tmp, ex);
-        }
-
+        createSockets();
         super.start();
-
         ucast_receiver=new PacketReceiver(sock,
                                           "unicast receiver",
                                           new Runnable() {
@@ -351,9 +341,9 @@ public class UDP extends TP {
             // https://jira.jboss.org/jira/browse/JGRP-777 - this doesn't work on MacOS, and we don't have
             // cross talking on Windows anyway, so we just do it for Linux. (How about Solaris ?)
             if(can_bind_to_mcast_addr)
-                mcast_sock=Util.createMulticastSocket(getSocketFactory(), Global.UDP_MCAST_SOCK, mcast_group_addr, mcast_port, log);
+                mcast_sock=Util.createMulticastSocket(getSocketFactory(), "jgroups.udp.mcast_sock", mcast_group_addr, mcast_port, log);
             else
-                mcast_sock=getSocketFactory().createMulticastSocket(Global.UDP_MCAST_SOCK, mcast_port);
+                mcast_sock=getSocketFactory().createMulticastSocket("jgroups.udp.mcast_sock", mcast_port);
 
             if(disable_loopback)
                 mcast_sock.setLoopbackMode(disable_loopback);
@@ -405,7 +395,9 @@ public class UDP extends TP {
     }
 
     protected IpAddress createLocalAddress() {
-        return sock != null && !sock.isClosed()? new IpAddress(sock.getLocalAddress(), sock.getLocalPort()) : null;
+        if(sock == null || sock.isClosed())
+            return null;
+        return new IpAddress(external_addr != null? external_addr : sock.getLocalAddress(), sock.getLocalPort());
     }
 
 
@@ -448,7 +440,7 @@ public class UDP extends TP {
         int localPort=0;
         while(true) {
             try {
-                tmp=getSocketFactory().createDatagramSocket(Global.UDP_UCAST_SOCK, localPort, bind_addr);
+                tmp=getSocketFactory().createDatagramSocket("jgroups.udp.unicast_sock", localPort, bind_addr);
             }
             catch(SocketException socket_ex) {
                 // Vladimir May 30th 2007
@@ -477,7 +469,7 @@ public class UDP extends TP {
         int rcv_port=bind_port, max_port=bind_port + port_range;
         while(rcv_port <= max_port) {
             try {
-                tmp=getSocketFactory().createDatagramSocket(Global.UDP_UCAST_SOCK, rcv_port, bind_addr);
+                tmp=getSocketFactory().createDatagramSocket("jgroups.udp.unicast_sock", rcv_port, bind_addr);
                 return tmp;
             }
             catch(SocketException bind_ex) {	// Cannot listen on this port
