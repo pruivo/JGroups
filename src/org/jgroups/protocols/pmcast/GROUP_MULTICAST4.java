@@ -7,9 +7,9 @@ import org.jgroups.View;
 import org.jgroups.annotations.MBean;
 import org.jgroups.annotations.ManagedAttribute;
 import org.jgroups.annotations.ManagedOperation;
-import org.jgroups.groups.DeliverManager;
 import org.jgroups.groups.GroupAddress;
-import org.jgroups.groups.GroupMulticastHeader;
+import org.jgroups.groups.manager.DeliverManagerOld;
+import org.jgroups.groups.header.GroupMulticastHeader;
 import org.jgroups.groups.MessageID;
 import org.jgroups.stack.Protocol;
 
@@ -71,7 +71,7 @@ public class GROUP_MULTICAST4 extends Protocol {
 
     //to deliver messages: guarantees that only one thread deliver the message
     private final ReentrantLock deliverLock = new ReentrantLock();
-    private final DeliverManager dm = new DeliverManager();
+    private final DeliverManagerOld dm = new DeliverManagerOld();
     private ExecutorService deliver = Executors.newSingleThreadExecutor();
 
     @Override

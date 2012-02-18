@@ -51,5 +51,6 @@
     <class id="88" name="org.jgroups.blocks.executor.Executions$StreamableCallable"/>
     <class id="89" name="org.jgroups.protocols.COUNTER$CounterHeader"/>
 
-    <class id="1000" name="org.jgroups.groups.GroupMulticastHeader"/>
+    <class id="1000" name="org.jgroups.groups.header.GroupMulticastHeader"/>
+    <class id="1001" name="org.jgroups.groups.header.GroupMulticastHeader2"/>
 </magic-number-class-mapping>

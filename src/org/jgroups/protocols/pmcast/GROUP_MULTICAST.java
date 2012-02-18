@@ -7,9 +7,9 @@ import org.jgroups.View;
 import org.jgroups.annotations.MBean;
 import org.jgroups.annotations.ManagedAttribute;
 import org.jgroups.annotations.ManagedOperation;
-import org.jgroups.groups.DeliverManager;
+import org.jgroups.groups.manager.DeliverManagerOld;
 import org.jgroups.groups.GroupAddress;
-import org.jgroups.groups.GroupMulticastHeader;
+import org.jgroups.groups.header.GroupMulticastHeader;
 import org.jgroups.groups.MessageID;
 import org.jgroups.groups.failure.FailureManager;
 import org.jgroups.groups.failure.FinalMessagesManager;
@@ -77,7 +77,7 @@ public class GROUP_MULTICAST extends Protocol {
 
     //to deliver messages
     private final DeliverThread deliver = new DeliverThread();
-    private final DeliverManager dm = new DeliverManager();
+    private final DeliverManagerOld dm = new DeliverManagerOld();
 
     //log
     private boolean trace = false;

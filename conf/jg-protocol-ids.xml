@@ -60,5 +60,5 @@
     <class id="1001" name="org.jgroups.protocols.pmcast.GROUP_MULTICAST2"/>
     <class id="1002" name="org.jgroups.protocols.pmcast.GROUP_MULTICAST3"/>
     <class id="1003" name="org.jgroups.protocols.pmcast.GROUP_MULTICAST4"/>
-
+    <class id="1004" name="org.jgroups.protocols.pmcast.GROUP_MULTICAST5"/>
 </protocol-ids>

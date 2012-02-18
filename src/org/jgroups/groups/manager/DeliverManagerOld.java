@@ -1,4 +1,6 @@
-package org.jgroups.groups;
+package org.jgroups.groups.manager;
+
+import org.jgroups.groups.MessageID;
 
 import java.util.Comparator;
 import java.util.Map;
@@ -9,7 +11,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * @author pedro
  *         Date: 31-05-2011
  */
-public class DeliverManager {
+public class DeliverManagerOld {
     private final ConcurrentSkipListMap<MapKey, Boolean> messages = new ConcurrentSkipListMap<MapKey, Boolean>(new MapKeyComparator());
     private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 

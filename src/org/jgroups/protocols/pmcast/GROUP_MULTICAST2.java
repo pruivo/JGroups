@@ -8,7 +8,7 @@ import org.jgroups.annotations.ManagedAttribute;
 import org.jgroups.annotations.ManagedOperation;
 import org.jgroups.groups.failure.FinalMessagesManager;
 import org.jgroups.groups.GroupAddress;
-import org.jgroups.groups.GroupMulticastHeader;
+import org.jgroups.groups.header.GroupMulticastHeader;
 import org.jgroups.groups.MessageID;
 import org.jgroups.stack.Protocol;
 

@@ -12,9 +12,9 @@ import java.io.*;
  *
  * equals to ViewId
  */
-public class MessageID implements Externalizable, Comparable, Cloneable, Streamable {
+public class MessageID implements Externalizable, Comparable<MessageID>, Cloneable, Streamable {
     private Address address = null;
-    private long id = 0;
+    private long id = -1;
 
     public MessageID() {}
 
@@ -32,22 +32,16 @@ public class MessageID implements Externalizable, Comparable, Cloneable, Streama
     }
 
     @Override
-    public int compareTo(Object other) {
+    public int compareTo(MessageID other) {
         if(other == null) return 1;
 
-        if(!(other instanceof MessageID)) {
-            throw new ClassCastException("MessageID.compareTo(): message id is not comparable with different Objects");
-        }
-
-        MessageID otherID = (MessageID) other;
-
-        if(this.getId() < otherID.getId()){
+        if(this.getId() < other.getId()){
             return -1;
-        } else if(this.getId() > otherID.getId()){
+        } else if(this.getId() > other.getId()){
             return 1;
         }
 
-        return this.address.compareTo(otherID.address);
+        return this.address.compareTo(other.address);
     }
 
     public MessageID copy() {
@@ -71,13 +65,8 @@ public class MessageID implements Externalizable, Comparable, Cloneable, Streama
         return new MessageID(address, id);
     }
 
-    public int compare(Object o) {
-        return compareTo(o);
-    }
-
-
     public boolean equals(Object other) {
-        return (other instanceof MessageID) && compareTo(other) == 0;
+        return (other instanceof MessageID) && compareTo((MessageID) other) == 0;
     }
 
 
