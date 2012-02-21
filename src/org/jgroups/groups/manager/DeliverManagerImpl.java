@@ -3,10 +3,7 @@ package org.jgroups.groups.manager;
 import org.jgroups.Message;
 import org.jgroups.groups.MessageID;
 
-import java.util.Comparator;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.ListIterator;
+import java.util.*;
 
 /**
  * // TODO: Document this
@@ -16,66 +13,61 @@ import java.util.ListIterator;
  */
 public class DeliverManagerImpl implements DeliverManager {
     private static final MessageInfoComparator COMPARATOR = new MessageInfoComparator();
-    private final LinkedList<MessageInfo> toDeliverList = new LinkedList<MessageInfo>();
+    private final SortedSet<MessageInfo> toDeliverSet = new TreeSet<MessageInfo>(COMPARATOR);
 
     public void addNewMessageToDeliver(MessageID messageID, Object message, long sequenceNumber) {
         MessageInfo messageInfo = new MessageInfo(messageID, message, sequenceNumber);
-        synchronized (toDeliverList) {
-            ListIterator<MessageInfo> iterator = toDeliverList.listIterator(toDeliverList.size());
-
-            int insertIdx = 0;
-
-            while (iterator.hasPrevious()) {
-                if (COMPARATOR.compare(iterator.previous(), messageInfo) < 0) {
-                    insertIdx = iterator.nextIndex() - 1;
-                    break;
-                }
-            }
-
-            toDeliverList.add(insertIdx, messageInfo);
+        synchronized (toDeliverSet) {
+            toDeliverSet.add(messageInfo);
         }
     }
 
     @SuppressWarnings({"SuspiciousMethodCalls"})
     public void markReadyToDeliver(MessageID messageID, long finalSequenceNumber) {
-        synchronized (toDeliverList) {
-            int idx = toDeliverList.indexOf(messageID);
+        synchronized (toDeliverSet) {
+            MessageInfo messageInfo = null;
+            boolean needsUpdatePosition = false;
+            Iterator<MessageInfo> iterator = toDeliverSet.iterator();
 
-            if (idx == -1) {
-                throw new IllegalStateException("Message ID not found in to deliver list. this can't happen. " +
-                        "Message ID is " + messageID);
-            }
-
-            MessageInfo messageInfo = toDeliverList.get(idx);
-
-            if (messageInfo.updateAndmarkReadyToDeliver(finalSequenceNumber)) {
-                toDeliverList.remove(idx);
-
-                for (; idx < toDeliverList.size(); ++idx) {
-                    if (COMPARATOR.compare(toDeliverList.get(idx), messageInfo) < 0) {
-                        toDeliverList.add(idx, messageInfo);
+            while (iterator.hasNext()) {
+                MessageInfo aux = iterator.next();
+                if (aux.equals(messageID)) {
+                    messageInfo = aux;
+                    if (messageInfo.sequenceNumber != finalSequenceNumber) {
+                        needsUpdatePosition = true;
+                        iterator.remove();
                     }
+                    break;
                 }
             }
 
-            if (idx == 0) {
-                toDeliverList.notify();
+            if (messageInfo == null) {
+                throw new IllegalStateException("Message ID not found in to deliver list. this can't happen. " +
+                        "Message ID is " + messageID);
+            }
+            messageInfo.updateAndmarkReadyToDeliver(finalSequenceNumber);
+            if (needsUpdatePosition) {
+                toDeliverSet.add(messageInfo);
+            }
+
+            if (!toDeliverSet.isEmpty() && toDeliverSet.first().isReadyToDeliver()) {
+                toDeliverSet.notify();
             }
         }
     }
 
     public List<Message> getNextMessagesToDeliver() throws InterruptedException {
         LinkedList<Message> toDeliver = new LinkedList<Message>();
-        synchronized (toDeliverList) {
-            while (toDeliverList.isEmpty()) {
-                toDeliverList.wait();
+        synchronized (toDeliverSet) {
+            while (toDeliverSet.isEmpty()) {
+                toDeliverSet.wait();
             }
 
-            if (!toDeliverList.get(0).isReadyToDeliver()) {
-                toDeliverList.wait();
+            if (!toDeliverSet.first().isReadyToDeliver()) {
+                toDeliverSet.wait();
             }
 
-            ListIterator<MessageInfo> iterator = toDeliverList.listIterator();
+            Iterator<MessageInfo> iterator = toDeliverSet.iterator();
 
             while (iterator.hasNext()) {
                 MessageInfo messageInfo = iterator.next();
@@ -91,8 +83,8 @@ public class DeliverManagerImpl implements DeliverManager {
     }
 
     public void clear() {
-        synchronized (toDeliverList) {
-            toDeliverList.clear();
+        synchronized (toDeliverSet) {
+            toDeliverSet.clear();
         }
     }
 
@@ -100,8 +92,8 @@ public class DeliverManagerImpl implements DeliverManager {
 
         private MessageID messageID;
         private Object message;
-        private long sequenceNumber;
-        private boolean readyToDeliver;
+        private volatile long sequenceNumber;
+        private volatile boolean readyToDeliver;
 
         public MessageInfo(MessageID messageID, Object message, long sequenceNumber) {
             if (messageID == null) {
@@ -110,7 +102,7 @@ public class DeliverManagerImpl implements DeliverManager {
             this.messageID = messageID;
             this.message = message;
             this.sequenceNumber = sequenceNumber;
-            readyToDeliver = false;
+            this.readyToDeliver = false;
         }
 
         private Message createMessage() {
@@ -120,11 +112,9 @@ public class DeliverManagerImpl implements DeliverManager {
             return message;
         }
 
-        private boolean updateAndmarkReadyToDeliver(long finalSequenceNumber) {
-            boolean result = this.sequenceNumber != finalSequenceNumber;
+        private void updateAndmarkReadyToDeliver(long finalSequenceNumber) {
             this.readyToDeliver = true;
             this.sequenceNumber = finalSequenceNumber;
-            return result;
         }
 
         private boolean isReadyToDeliver() {
@@ -160,6 +150,15 @@ public class DeliverManagerImpl implements DeliverManager {
         public int hashCode() {
             return messageID.hashCode();
         }
+
+        @Override
+        public String toString() {
+            return "MessageInfo{" +
+                    "messageID=" + messageID +
+                    ", sequenceNumber=" + sequenceNumber +
+                    ", readyToDeliver=" + readyToDeliver +
+                    '}';
+        }
     }
 
     private static class MessageInfoComparator implements Comparator<MessageInfo> {
@@ -183,6 +182,12 @@ public class DeliverManagerImpl implements DeliverManager {
             }
 
             return compareMessageID;
+        }
+    }
+
+    public Set<MessageInfo> getMessageSet() {
+        synchronized (toDeliverSet) {
+            return Collections.unmodifiableSet(toDeliverSet);
         }
     }
 }

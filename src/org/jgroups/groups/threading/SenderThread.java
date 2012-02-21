@@ -3,6 +3,8 @@ package org.jgroups.groups.threading;
 import org.jgroups.Address;
 import org.jgroups.Event;
 import org.jgroups.Message;
+import org.jgroups.logging.Log;
+import org.jgroups.logging.LogFactory;
 import org.jgroups.stack.Protocol;
 
 import java.util.Set;
@@ -16,11 +18,15 @@ import java.util.concurrent.LinkedBlockingQueue;
  * @since 4.0
  */
 public class SenderThread extends Thread {
+
     private boolean running = false;
     private Protocol groupMulticastProtocol;
+
     private final BlockingQueue<MessageToSend> sendingQueue;
+    private final Log log = LogFactory.getLog(this.getClass());
 
     public SenderThread(Protocol protocol) {
+        super("Group-Multicast-Sender-Thread");
         if (protocol == null) {
             throw new NullPointerException("Group Multicast Protocol can't be null");
         }
@@ -55,6 +61,9 @@ public class SenderThread extends Thread {
                 if (messageToSend.destination == null) {
                     groupMulticastProtocol.getDownProtocol().down(new Event(Event.MSG, messageToSend.message));
                 } else {
+                    if (log.isDebugEnabled()) {
+                        log.debug("Send group message " + messageToSend.message + " to " + messageToSend.destination);
+                    }
                     for (Address address : messageToSend.destination) {
                         Message cpy = messageToSend.message.copy();
                         cpy.setDest(address);

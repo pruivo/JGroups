@@ -53,11 +53,9 @@ public class SenderManager {
     }
 
     private static class MessageInfo {
-        private static final int BYTE_LENGTH = 7; //java doesn't have unsigned byte so we just ignore the last bit
-
         private ArrayList<Address> destination;
         private long highestSequenceNumberReceived;
-        private byte[] receivedPropose;
+        private BitSet receivedPropose;
         private boolean finalMessageSent = false;
 
         private MessageInfo(Set<Address> addresses, long sequenceNumber) {
@@ -81,12 +79,9 @@ public class SenderManager {
         }
 
         private void createNewBitSet(int maxElements) {
-            receivedPropose = new byte[(maxElements - 1) / BYTE_LENGTH];
-            for (int i = 0; i < receivedPropose.length - 1; ++i) {
-                receivedPropose[i] = 0x7f;
-            }
-            for (int i = 0; i < (maxElements - 1) % BYTE_LENGTH; ++i) {
-                receivedPropose[receivedPropose.length - 1] |= 1 << i;
+            receivedPropose = new BitSet(maxElements);
+            for (int i = 0; i < maxElements; ++i) {
+                receivedPropose.set(i);
             }
         }
 
@@ -95,17 +90,11 @@ public class SenderManager {
             if (idx == -1) {
                 throw new IllegalStateException("Address doesn't exists in destination list. Address is " + address);
             }
-            byte mask = (byte) ~(1 << (idx % BYTE_LENGTH));
-            receivedPropose[idx / BYTE_LENGTH] &= mask;
+            receivedPropose.set(idx, false);
         }
 
         private boolean checkAllProposesReceived() {
-            for (int i = 0; i < receivedPropose.length; ++i) {
-                if (receivedPropose[i] != 0) {
-                    return false;
-                }
-            }
-            return true;
+            return receivedPropose.isEmpty();
         }
     }
 

@@ -19,7 +19,7 @@ public class SequenceNumberManager {
     }
 
     public synchronized long updateAndGet(long otherSequenceNumber) {
-        if (sequenceNumber <= otherSequenceNumber) {
+        if (sequenceNumber >= otherSequenceNumber) {
             return sequenceNumber++;
         } else {
             sequenceNumber = otherSequenceNumber + 1;
