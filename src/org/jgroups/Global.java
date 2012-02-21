@@ -19,8 +19,6 @@ public class Global {
 
     public static final int MAX_DATAGRAM_PACKET_SIZE=1 << 16;
 
-    public static final Object NULL=new Object();
-
     public static final short SCOPE_ID=ClassConfigurator.getProtocolId(SCOPE.class);
 
     public static final String IPv4="java.net.preferIPv4Stack";
@@ -85,6 +83,8 @@ public class Global {
     public static final String STACK_INDEPENDENT="stack-independent";
     public static final String GOSSIP_ROUTER="gossip-router";
     public static final String FLUSH="flush";
+    public static final String BYTEMAN="byteman";
+
     public static final String INITIAL_MCAST_ADDR="INITIAL_MCAST_ADDR";
     public static final String INITIAL_MCAST_PORT="INITIAL_MCAST_PORT";
     public static final String INITIAL_TCP_PORT="INITIAL_TCP_PORT";

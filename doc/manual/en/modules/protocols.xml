@@ -322,6 +322,24 @@
             ${BPING}
         </section>
 
+
+        <section>
+            <title>RACKSPACE_PING</title>
+
+            <para>
+                RACKSPACE_PING uses Rackspace Cloud Files Storage to discover initial members. Each node writes a small
+                object in a shared Rackspace container. New joiners read all addresses from the container and ping each
+                of the elements of the resulting set of members. When a member leaves, it deletes its corresponding object.
+            </para>
+
+            <para>
+                This objects are stored under a container called 'jgroups', and each node will write an object name after
+                the cluster name, plus a "/" followed by the address, thus simulating a hierarchical structure.
+            </para>
+
+            ${RACKSPACE_PING}
+         </section>
+
         <section>
             <title>S3_PING</title>
             
@@ -428,6 +446,54 @@
             </para>
             ${MERGE2}
 
+        </section>
+
+        <section id="MERGE3">
+            <title>MERGE3</title>
+            <para>
+                MERGE3 was added in JGroups 3.1.
+            </para>
+            <para>
+                In MERGE3, all members periodically send an INFO message with their address (UUID), logical name,
+                physical address and ViewId. The ViewId (<xref linkend="ViewId"/>) is used to see if we have diverging
+                views among the cluster members: periodically, every coordinator looks at the INFO messages received so
+                far and checks if there are any inconsistencies.
+            </para>
+            <para>
+                When inconsistencies are found, the merge leader will be the member with the lowest address (UUID). This
+                is deterministic, and therefore we should at most times only have 1 merge going on.
+            </para>
+            <para>
+                The merge leader then asks the senders of the inconsistent ViewIds for their full Views. Once received,
+                it simply passes a MERGE event up the stack, where the merge will be handled (by GMS) in exactly the same
+                way as if MERGE2 has generated the MERGE event.
+            </para>
+            <para>
+                The advantages of MERGE3 compared to MERGE2 are:
+                <itemizedlist>
+                    <listitem>
+                        Sending of INFO messages is spread out over time, preventing messgage peaks which might cause
+                        packet loss. This is especially important in large clusters.
+                    </listitem>
+                    <listitem>
+                        Only 1 merge should be running at any time. Competing merges, as happening with MERGE2, slow
+                        down the merge process, and don't scale to large clusters.
+                    </listitem>
+                    <listitem>
+                        An INFO message carries the logical name and physical address of a member. Compared to MERGE2,
+                        this allows us to immediately send messages to newly merged members, and not have to solicit
+                        this information first.
+                    </listitem>
+                    <listitem>
+                        On the downside, MERGE3 has constant (small) traffic by all members.
+                    </listitem>
+                    <listitem>
+                        MERGE3 was written for an IP multicast capable transport (UDP), but it also works with other
+                        transports (such as TCP), although it isn't as efficient on TCP as on UDP.
+                    </listitem>
+                </itemizedlist>
+            </para>
+            ${MERGE3}
         </section>
     </section>
 
@@ -627,7 +693,22 @@
 
         </section>
 
-         <section id="UNICAST">
+        <section id="NAKACK2">
+            <title>NAKACK2</title>
+            <para>
+                NAKACK2 was introduced in 3.1 and is a successor to NAKACK (at some point it will replace NAKACK). It
+                has the same properties as NAKACK, but its implementation is faster and uses less memory, plus it
+                creates fewer tasks in the timer.
+            </para>
+            <para>
+                Some of the properties of NAKACK were deprecated in NAKACK2, but were not removed so people can simply
+                change from NAKACK to NAKACK2 by changing the protocol name in the config.
+            </para>
+
+            ${NAKACK2}
+        </section>
+
+        <section id="UNICAST">
             <title>UNICAST</title>
 
             <para>
@@ -643,26 +724,58 @@
                 FIFO order means that all messages from a given sender are received in exactly the order in which
                 they were sent.
             </para>
-             <para>
-                 On top of a reliable transport, such as TCP, UNICAST is not really needed. However, concurrent
-                 delivery of messages from the same sender is prevented by UNICAST by acquiring a lock on the sender's
-                 retransmission table, so unless concurrent delivery is desired, UNICAST should not be removed from
-                 the stack even if TCP is used.
-             </para>
 
-			${UNICAST}
+            <para>
+                UNICAST uses <emphasis>positive acks</emphasis> for retransmission; sender A keeps sending
+                message M until receiver B delivers M and sends an ack(M) to A, or until B leaves the cluster or A
+                crashes.
+            </para>
+            <para>
+                Although JGroups attempts to send acks selectively, UNICAST will still see a lot of acks on the wire.
+                If this is not desired, use UNICAST2 (see <xref linkend="UNICAST2"/>).
+            </para>
 
-         </section>
+            <para>
+                On top of a reliable transport, such as TCP, UNICAST is not really needed. However, concurrent
+                delivery of messages from the same sender is prevented by UNICAST by acquiring a lock on the sender's
+                retransmission table, so unless concurrent delivery is desired, UNICAST should not be removed from
+                the stack even if TCP is used.
+            </para>
 
-        <section>
+            ${UNICAST}
+
+        </section>
+
+        <section id="UNICAST2">
             <title>UNICAST2</title>
             <para>
                 UNICAST2 provides lossless, ordered, communication between 2 members. Contrary to UNICAST, it
-                uses negative acks (similar to NAKACK) rather than positive acks. This reduces the communication
+                uses <emphasis>negative acks</emphasis> (similar to NAKACK) rather than positive acks. This reduces the communication
                 overhead required for sending an ack for every message.
+            </para>
+            <para>
+                Negative acks have sender A simply send messages without retransmission, and receivers never ack
+                messages, until they detect a gap: for instance, if A sends messages 1,2,4,5, then B delivers 1 and 2,
+                but queues 4 and 5 because it is missing message 3 from A. B then asks A to retransmit 3. When 3 is
+                received, messages 3, 4 and 5 can be delivered to the application.
+            </para>
+            <para>
+                Compared to a positive ack scheme as used in UNICAST, negative acks have the advantage that they generate
+                less traffic: if all messages are received in order, we never need to do retransmission.
             </para>
 
             ${UNICAST2}
+        </section>
+
+        <section id="RSVP">
+            <title>RSVP</title>
+            <para>
+                The RSVP protocol is not a reliable delivery protocol per se, but augments reliable protocols such
+                as NAKACK, UNICAST or UNICAST2. It should be placed somewhere <emphasis>above</emphasis> these in
+                the stack.
+            </para>
+
+            ${RSVP}
         </section>
     </section>
 
@@ -795,7 +908,7 @@
                     </listitem>
 
                     <listitem>
-                        <para>Add the MERGE2 protocol. This doesn't actually prevent
+                        <para>Add the MERGE2 or MERGE3 protocol. This doesn't actually prevent
                             multiple initial cordinators, but rectifies the problem by merging
                             different subgroups back into one. Note that this might involve state
                             merging which needs to be done by the application.
@@ -1059,6 +1172,21 @@
                 ${STATE_SOCK}
             </section>
 
+        </section>
+
+        <section id="BARRIER">
+            <title>BARRIER</title>
+            <para>
+                BARRIER is used by some of the state transfer protocols, as it lets existing threads complete and blocks
+                new threads to get both the digest and state in one go.
+            </para>
+            <para>
+                In 3.1, a new mechanism for state transfer will be implemented, eliminating the need for BARRIER. Until
+                then, BARRIER should be used when one of the state transfer protocols is used. BARRIER is
+                part of every default stack which contains a state transfer protocol.
+            </para>
+
+            ${BARRIER}
         </section>
 
     </section>

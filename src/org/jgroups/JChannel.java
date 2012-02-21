@@ -16,6 +16,7 @@ import org.jgroups.util.UUID;
 import org.w3c.dom.Element;
 
 import java.io.*;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.net.URL;
 import java.util.*;
@@ -25,10 +26,10 @@ import java.util.concurrent.ConcurrentMap;
 /**
  * JChannel is a default implementation of a Channel abstraction.
  * <p/>
- * 
+ *
  * JChannel is instantiated using an appropriate form of a protocol stack description. Protocol
  * stack can be described using a file, URL or a stream containing XML stack description.
- * 
+ *
  * @author Bela Ban
  * @since 2.0
  */
@@ -180,7 +181,7 @@ public class JChannel extends Channel {
     }
 
 
- 
+
     /**
      * Returns the protocol stack
      */
@@ -258,7 +259,7 @@ public class JChannel extends Channel {
 
     @ManagedOperation(description="Connects the channel to a group")
     public synchronized void connect(String cluster_name) throws Exception {
-    	connect(cluster_name,true);
+        connect(cluster_name,true);
     }
 
     /**
@@ -300,10 +301,10 @@ public class JChannel extends Channel {
     }
 
     public synchronized void connect(String cluster_name, Address target, long timeout) throws Exception {
-    	connect(cluster_name, target, timeout,true);
+        connect(cluster_name, target, timeout,true);
     }
 
-    
+
     /**
      * Connects this channel to a group and gets a state from a specified state provider.<p/>
      * This method invokes <code>connect()<code> and then <code>getState<code>.<p/>
@@ -316,7 +317,7 @@ public class JChannel extends Channel {
      * @param target The state provider. If null, the state will be fetched from the coordinator, unless this channel
      *               is the coordinator.
      * @param timeout The timeout for the state transfer.
-     * 
+     *
      * @exception Exception The protocol stack cannot be started, or the JOIN failed
      * @exception IllegalStateException The channel is closed or disconnected
      * @exception StateTransferException State transfer was not successful
@@ -340,7 +341,7 @@ public class JChannel extends Channel {
 
         try {
             Event connect_event=useFlushIfPresent? new Event(Event.CONNECT_WITH_STATE_TRANSFER_USE_FLUSH, cluster_name)
-                                                 : new Event(Event.CONNECT_WITH_STATE_TRANSFER, cluster_name);
+                    : new Event(Event.CONNECT_WITH_STATE_TRANSFER, cluster_name);
 
             Object res=down(connect_event); // waits forever until connected (or channel is closed)
             if(res instanceof Exception) {
@@ -377,7 +378,7 @@ public class JChannel extends Channel {
                 down(disconnect_event);   // DISCONNECT is handled by each layer
             }
             connected=false;
-            stopStack(true, false);            
+            stopStack(true, false);
             notifyChannelDisconnected(this);
             init(); // sets local_addr=null; changed March 18 2003 (bela) -- prevented successful rejoining
         }
@@ -432,7 +433,6 @@ public class JChannel extends Channel {
     }
 
 
-    @ManagedOperation
     public void send(Message msg) throws Exception {
         checkClosedOrNotConnected();
         if(msg == null)
@@ -446,7 +446,6 @@ public class JChannel extends Channel {
     }
 
 
-    @ManagedOperation
     public void send(Address dst, Object obj) throws Exception {
         send(new Message(dst, null, obj));
     }
@@ -463,13 +462,13 @@ public class JChannel extends Channel {
     public View getView() {
         return closed || !connected ? null : my_view;
     }
-    
+
     @ManagedAttribute(name="View")
     public String getViewAsString() {
         View v=getView();
         return v != null ? v.toString() : "n/a";
     }
-    
+
     @ManagedAttribute
     public static String getVersion() {
         return Version.printDescription();
@@ -544,20 +543,20 @@ public class JChannel extends Channel {
      * Retrieves state from the target member. See {@link #getState(Address,long)} for details.
      */
     public void getState(Address target, long timeout, boolean useFlushIfPresent) throws Exception {
-    	Callable<Boolean> flusher = new Callable<Boolean>() {
-			public Boolean call() throws Exception {
-				return Util.startFlush(JChannel.this);
-			}
-		};
-		getState(target, timeout, useFlushIfPresent?flusher:null);
-	}
-    
+        Callable<Boolean> flusher = new Callable<Boolean>() {
+            public Boolean call() throws Exception {
+                return Util.startFlush(JChannel.this);
+            }
+        };
+        getState(target, timeout, useFlushIfPresent?flusher:null);
+    }
+
 
     protected void getState(Address target, long timeout, Callable<Boolean> flushInvoker) throws Exception {
         checkClosedOrNotConnected();
         if(!state_transfer_supported)
             throw new IllegalStateException("fetching state will fail as state transfer is not supported. "
-                                              + "Add one of the state transfer protocols to your configuration");
+                    + "Add one of the state transfer protocols to your configuration");
 
         if(target == null)
             target=determineCoordinator();
@@ -643,7 +642,7 @@ public class JChannel extends Channel {
                     cfg.putAll(cfg);
                 }
                 break;
-                
+
             case Event.GET_STATE_OK:
                 StateTransferResult result=(StateTransferResult)evt.getArg();
                 if(up_handler != null) {
@@ -819,7 +818,7 @@ public class JChannel extends Channel {
 
         // changed by Bela Sept 25 2003
         //if(mq != null && mq.closed())
-          //  mq.reset();
+        //  mq.reset();
         connected=false;
     }
 
@@ -945,9 +944,9 @@ public class JChannel extends Channel {
     public void startFlush(boolean automatic_resume) throws Exception {
         if(!flushSupported())
             throw new IllegalStateException("Flush is not supported, add pbcast.FLUSH protocol to your configuration");
-        
+
         try {
-            down(new Event(Event.SUSPEND));            
+            down(new Event(Event.SUSPEND));
         } catch (Exception e) {
             throw new Exception("Flush failed", e.getCause());
         } finally {
@@ -963,7 +962,7 @@ public class JChannel extends Channel {
         boolean validParticipants = v != null && v.getMembers().containsAll(flushParticipants);
         if (!validParticipants)
             throw new IllegalArgumentException("Current view " + v
-                        + " does not contain all flush participants " + flushParticipants);
+                    + " does not contain all flush participants " + flushParticipants);
         try {
             down(new Event(Event.SUSPEND, flushParticipants));
         } catch (Exception e) {
@@ -971,7 +970,7 @@ public class JChannel extends Channel {
         } finally {
             if (automatic_resume)
                 stopFlush(flushParticipants);
-        }          
+        }
     }
 
     public void stopFlush() {
@@ -985,7 +984,7 @@ public class JChannel extends Channel {
             throw new IllegalStateException("Flush is not supported, add pbcast.FLUSH protocol to your configuration");
         down(new Event(Event.RESUME, flushParticipants));
     }
-    
+
 
     Address determineCoordinator() {
         List<Address> mbrs=my_view != null? my_view.getMembers() : null;
@@ -1013,25 +1012,7 @@ public class JChannel extends Channel {
             Map<String, String> map=new HashMap<String, String>(2);
             for(String key: keys) {
                 if(key.startsWith("jmx")) {
-                    Map<String, Object> tmp_stats;
-                    int index=key.indexOf("=");
-                    if(index > -1) {
-                        List<String> list=null;
-                        String protocol_name=key.substring(index +1);
-                        index=protocol_name.indexOf(".");
-                        if(index > -1) {
-                            String rest=protocol_name;
-                            protocol_name=protocol_name.substring(0, index);
-                            String attrs=rest.substring(index +1); // e.g. "num_sent,msgs,num_received_msgs"
-                            list=Util.parseStringList(attrs, ",");
-                        }
-
-                        tmp_stats=dumpStats(protocol_name, list);
-                    }
-                    else
-                        tmp_stats=dumpStats();
-
-                    map.put("jmx", tmp_stats != null? Util.mapToString(tmp_stats) : "null");
+                    handleJmx(map, key);
                     continue;
                 }
                 if(key.startsWith("invoke") || key.startsWith("op")) {
@@ -1063,6 +1044,48 @@ public class JChannel extends Channel {
             return new String[]{"jmx", "invoke=<operation>[<args>]", "\nop=<operation>[<args>]"};
         }
 
+        protected void handleJmx(Map<String, String> map, String input) {
+            Map<String, Object> tmp_stats;
+            int index=input.indexOf("=");
+            if(index > -1) {
+                List<String> list=null;
+                String protocol_name=input.substring(index +1);
+                index=protocol_name.indexOf(".");
+                if(index > -1) {
+                    String rest=protocol_name;
+                    protocol_name=protocol_name.substring(0, index);
+                    String attrs=rest.substring(index +1); // e.g. "num_sent,msgs,num_received_msgs"
+                    list=Util.parseStringList(attrs, ",");
+
+                    // check if there are any attribute-sets in the list
+                    for(Iterator<String> it=list.iterator(); it.hasNext();) {
+                        String tmp=it.next();
+                        index=tmp.indexOf("=");
+                        if(index != -1) {
+                            String attrname=tmp.substring(0, index);
+                            String attrvalue=tmp.substring(index+1);
+                            Protocol prot=prot_stack.findProtocol(protocol_name);
+                            Field field=Util.getField(prot.getClass(), attrname);
+                            if(field != null) {
+                                Object value=MethodCall.convert(attrvalue, field.getType());
+                                if(value != null)
+                                    prot.setValue(attrname, value);
+                            }
+                            else {
+                                if(log.isWarnEnabled())
+                                    log.warn("Field \"" + attrname + "\" not found in protocol " + protocol_name);
+                            }
+                            it.remove();
+                        }
+                    }
+                }
+                tmp_stats=dumpStats(protocol_name, list);
+            }
+            else
+                tmp_stats=dumpStats();
+
+            map.put("jmx", tmp_stats != null? Util.mapToString(tmp_stats) : "null");
+        }
 
         /**
          * Invokes an operation and puts the return value into map
@@ -1112,5 +1135,5 @@ public class JChannel extends Channel {
         }
     }
 
-  
+
 }

@@ -15,8 +15,8 @@ import java.util.concurrent.TimeUnit;
 public class ResponseCollector<T> {
     @GuardedBy("lock")
     private final Map<Address,T> responses;
-    private final Lock lock=new ReentrantLock(false);
-    private final Condition cond=lock.newCondition();
+    private final Lock           lock=new ReentrantLock(false);
+    private final Condition      cond=lock.newCondition();
 
 
     /**
@@ -73,6 +73,19 @@ public class ResponseCollector<T> {
             for(Address member: members)
                 responses.remove(member);
             cond.signalAll();
+        }
+        finally {
+            lock.unlock();
+        }
+    }
+
+    public void retainAll(List<Address> members) {
+        if(members == null || members.isEmpty())
+            return;
+        lock.lock();
+        try {
+            if(responses.keySet().retainAll(members))
+                cond.signalAll();
         }
         finally {
             lock.unlock();
@@ -167,17 +180,16 @@ public class ResponseCollector<T> {
     public boolean waitForAllResponses(long timeout) {
         if(timeout <= 0)
             timeout=2000L;
-        long end_time=System.currentTimeMillis() + timeout;
-        long wait_time;
 
         lock.lock();
         try {
+            final long end_time=System.nanoTime() + TimeUnit.NANOSECONDS.convert(timeout, TimeUnit.MILLISECONDS);
             while(!hasAllResponses()) {
-                wait_time=end_time - System.currentTimeMillis();
+                long wait_time=end_time - System.nanoTime();
                 if(wait_time <= 0)
                     return false;
                 try {
-                    cond.await(wait_time, TimeUnit.MILLISECONDS);
+                    cond.await(wait_time, TimeUnit.NANOSECONDS);
                 }
                 catch(InterruptedException e) {
                     Thread.currentThread().interrupt(); // set interrupt flag again

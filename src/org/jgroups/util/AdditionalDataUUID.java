@@ -12,8 +12,8 @@ import java.security.SecureRandom;
  * @author Bela Ban
  */
 public class AdditionalDataUUID extends UUID {
-    private static final long serialVersionUID = 4583682459482601554L;
-    protected byte[]          payload;
+    private static final long serialVersionUID=4583682459482601554L;
+    protected byte[] payload;
 
     public AdditionalDataUUID() {
     }

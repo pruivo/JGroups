@@ -186,8 +186,8 @@ public class ProtocolStack extends Protocol {
                 Field[] fields=clazz.getDeclaredFields();
                 for(Field field: fields) {
                     if(field.isAnnotationPresent(Property.class)) {
-                        Object value=Configurator.getField(field, prot);
-                        Configurator.setField(field, new_prot, value);
+                        Object value=Util.getField(field, prot);
+                        Util.setField(field, new_prot, value);
                     }
                 }
 
@@ -204,8 +204,8 @@ public class ProtocolStack extends Protocol {
                         possible_names.add(Util.methodNameToAttributeName(methodName));
                         Field field=findField(prot, possible_names);
                         if(field != null) {
-                            Object value=Configurator.getField(field, prot);
-                            Configurator.setField(field, new_prot, value);
+                            Object value=Util.getField(field, prot);
+                            Util.setField(field, new_prot, value);
                         }
                     }
                 }
@@ -411,7 +411,7 @@ public class ProtocolStack extends Protocol {
             Property annotation;
             for(Field field: fields) {
                 if(field.isAnnotationPresent(Property.class)) {
-                    Object value=Configurator.getField(field, prot);
+                    Object value=Util.getField(field, prot);
                     if(value != null) {
                         annotation=field.getAnnotation(Property.class);
                         Class<?> conv_class=annotation.converter();
@@ -440,7 +440,7 @@ public class ProtocolStack extends Protocol {
                     possible_names.add(Util.methodNameToAttributeName(methodName));
                     Field field=findField(prot, possible_names);
                     if(field != null) {
-                        Object value=Configurator.getField(field, prot);
+                        Object value=Util.getField(field, prot);
                         if(value != null) {
                             Class<?> conv_class=annotation.converter();
                             PropertyConverter conv=null;
@@ -495,6 +495,7 @@ public class ProtocolStack extends Protocol {
     public ProtocolStack addProtocol(Protocol prot) {
         if(prot == null)
             return this;
+        prot.setProtocolStack(this);
         prot.setUpProtocol(this);
         if(bottom_prot == null) {
             top_prot=bottom_prot=prot;
@@ -504,7 +505,6 @@ public class ProtocolStack extends Protocol {
         prot.setDownProtocol(top_prot);
         prot.getDownProtocol().setUpProtocol(prot);
         top_prot=prot;
-
         return this;
     }
 
@@ -555,7 +555,7 @@ public class ProtocolStack extends Protocol {
 
         Protocol neighbor=findProtocol(neighbor_prot);
         if(neighbor == null)
-            throw new IllegalArgumentException("protocol \"" + neighbor_prot + "\" not found in " + stack.printProtocolSpec(false));
+            throw new IllegalArgumentException("protocol " + neighbor_prot + " not found in " + printProtocolSpec(false));
 
         if(position == ProtocolStack.BELOW && neighbor instanceof TP)
             throw new IllegalArgumentException("Cannot insert protocol " + prot.getName() + " below transport protocol");
@@ -612,7 +612,7 @@ public class ProtocolStack extends Protocol {
 
         Protocol neighbor=findProtocol(neighbor_prots);
         if(neighbor == null)
-            throw new IllegalArgumentException("protocol \"" + neighbor_prots.toString() + "\" not found in " + stack.printProtocolSpec(false));
+            throw new IllegalArgumentException("protocol \"" + Arrays.toString(neighbor_prots) + "\" not found in " + stack.printProtocolSpec(false));
         insertProtocolInStack(prot, neighbor,  position);
     }
 
@@ -668,6 +668,11 @@ public class ProtocolStack extends Protocol {
             log.error("failed destroying " + prot.getName() + ": " + t);
         }
         return prot;
+    }
+
+    public void removeProtocols(String ... protocols) throws Exception {
+        for(String protocol: protocols)
+            removeProtocol(protocol);
     }
 
 
@@ -825,6 +830,8 @@ public class ProtocolStack extends Protocol {
         List<Protocol> protocols = getProtocols();
         Collections.reverse(protocols);
         for(Protocol prot: protocols) {
+            if(prot.getProtocolStack() == null)
+                prot.setProtocolStack(this);
             if(prot instanceof TP) {
                 TP transport=(TP)prot;
                 if(transport.isSingleton()) {
@@ -1002,31 +1009,13 @@ public class ProtocolStack extends Protocol {
     }
 
 
-    /*--------------------------- Transport interface ------------------------------*/
-    public void send(Message msg) throws Exception {
-        down(new Event(Event.MSG, msg));
-    }
-
-    public Object receive(long timeout) throws Exception {
-        throw new Exception("ProtocolStack.receive(): not implemented !");
-    }
-    /*------------------------- End of  Transport interface ---------------------------*/
-
-
-
-
 
     /*--------------------------- Protocol functionality ------------------------------*/
     public String getName()  {return "ProtocolStack";}
 
-
-
-
     public Object up(Event evt) {
         return channel.up(evt);
     }
-
-
 
     public Object down(Event evt) {
         if(top_prot != null)

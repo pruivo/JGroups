@@ -20,7 +20,7 @@ import java.net.Inet6Address;
  * @author Bela Ban
  */
 public class IpAddress implements PhysicalAddress {
-    private static final long       serialVersionUID = 5877146630213185651L;
+    private static final long       serialVersionUID=5877146630213185651L;
     private InetAddress             ip_addr;
     private int                     port;
     protected static final Log      log=LogFactory.getLog(IpAddress.class);

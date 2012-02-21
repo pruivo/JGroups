@@ -49,13 +49,15 @@ public class Event {
     public static final int GET_LOCAL_ADDRESS                  = 91;  // arg = null --> UUID (local_addr)
     public static final int CONNECT_USE_FLUSH			       = 92;
     public static final int CONNECT_WITH_STATE_TRANSFER_USE_FLUSH = 93;
-    public static final int SUSPEND_BUT_FAIL                        = 94; // used in FLUSH testing, no args
+    public static final int SUSPEND_BUT_FAIL                      = 94; // used in FLUSH testing, no args
     public static final int LOCK                               = 95; // arg=LockInfo
     public static final int UNLOCK                             = 96; // arg=LockInfo
     public static final int UNLOCK_ALL                         = 97; // arg=null
     public static final int LOCK_AWAIT                         = 98; // arg=LockInfo
     public static final int LOCK_SIGNAL                        = 99; // arg=AwaitInfo
     public static final int IS_MERGE_IN_PROGRESS               = 100; // returns true or false
+    public static final int ADD_TO_XMIT_TABLE                  = 101; // arg=Message
+    public static final int GET_PHYSICAL_ADDRESSES             = 102; // arg=null (returns all physical addresses)
 
 
     public static final int USER_DEFINED                       = 1000; // arg = <user def., e.g. evt type + data>
@@ -137,6 +139,8 @@ public class Event {
             case LOCK_AWAIT:             return "LOCK_AWAIT";
             case LOCK_SIGNAL:            return "LOCK_SIGNAL";
             case IS_MERGE_IN_PROGRESS:   return "IS_MERGE_IN_PROGRESS";
+            case ADD_TO_XMIT_TABLE:      return "ADD_TO_XMIT_TABLE";
+            case GET_PHYSICAL_ADDRESSES: return "GET_PHYSICAL_ADDRESSES";
             
             case USER_DEFINED:           return "USER_DEFINED";
             default:                     return "UNDEFINED(" + t + ")";

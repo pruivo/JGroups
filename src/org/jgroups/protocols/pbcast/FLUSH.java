@@ -61,6 +61,9 @@ public class FLUSH extends Protocol {
     @Property(description = "Reconciliation phase toggle. Default is true")
     private boolean enable_reconciliation = true;
 
+    @Property(description="When set, FLUSH is bypassed, same effect as if FLUSH wasn't in the config at all")
+    protected boolean bypass=false;
+
     /*
      * --------------------------------------------- JMX ----------------------------------------------
      */
@@ -116,6 +119,7 @@ public class FLUSH extends Protocol {
      * Indicates if FLUSH.down() is currently blocking threads Condition predicate associated with
      * blockMutex
      */
+    @ManagedAttribute(description="Is message sending currently blocked")
     @GuardedBy("blockMutex")
     private volatile boolean isBlockingFlushDown = true;
 
@@ -192,6 +196,13 @@ public class FLUSH extends Protocol {
         return numberOfFlushes;
     }
 
+    @ManagedOperation(description="Sets the bypass flag")
+    public boolean setBypass(boolean flag) {
+        boolean ret=bypass;
+        bypass=flag;
+        return ret;
+    }
+
     @ManagedOperation(description = "Request cluster flush")
     public void startFlush() {
         startFlush(new Event(Event.SUSPEND));
@@ -241,6 +252,8 @@ public class FLUSH extends Protocol {
     public Object down(Event evt) {
         switch (evt.getType()) {
             case Event.MSG:
+                if(bypass)
+                    break;
                 Message msg = (Message) evt.getArg();
                 Address dest = msg.getDest();
                 if (dest == null) { // mcasts
@@ -340,6 +353,8 @@ public class FLUSH extends Protocol {
 
         switch (evt.getType()) {
             case Event.MSG:
+                if(bypass)
+                    break;
                 Message msg = (Message) evt.getArg();
                 final FlushHeader fh = (FlushHeader) msg.getHeader(this.id);
                 if (fh != null) {

@@ -9,7 +9,7 @@ import java.io.*;
  * @author Bela Ban
  */
 public class SingletonAddress implements Address {
-    private static final long serialVersionUID = 7295848950180741550L;
+    private static final long serialVersionUID=7295848950180741550L;
     protected final String  cluster_name;
     protected final Address addr;
 

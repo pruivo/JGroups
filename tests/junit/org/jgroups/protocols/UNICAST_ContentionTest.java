@@ -21,9 +21,9 @@ public class UNICAST_ContentionTest {
     static final String unicast_props="SHARED_LOOPBACK(thread_pool.queue_max_size=5000;" +
             "thread_pool.rejection_policy=discard;thread_pool.min_threads=20;thread_pool.max_threads=20;" +
             "oob_thread_pool.rejection_policy=discard;enable_bundling=true)"+
-            ":UNICAST(timeout=300,600,1200)";
+            ":UNICAST(xmit_interval=2000)";
     static final String unicast2_props=unicast_props.replace("UNICAST", "UNICAST2");
-    static final int NUM_THREADS=200;
+    static final int NUM_THREADS=100;
     static final int NUM_MSGS=100;
     static final int SIZE=1000; // default size of a message in bytes
 
@@ -117,7 +117,7 @@ public class UNICAST_ContentionTest {
     }
 
     @DataProvider
-    public static Object[][] provider() {
+    static Object[][] provider() {
         return new Object[][] {
                 {unicast_props},
                 {unicast2_props}
@@ -128,9 +128,7 @@ public class UNICAST_ContentionTest {
     private static long getNumberOfRetransmissions(JChannel ch) {
         Protocol prot=ch.getProtocolStack().findProtocol(UNICAST.class, UNICAST2.class);
         if(prot instanceof UNICAST)
-            return ((UNICAST)prot).getNumberOfRetransmissions();
-        if(prot instanceof UNICAST2)
-            return ((UNICAST2)prot).getNumberOfRetransmissions();
+            return ((UNICAST)prot).getNumXmits();
         return -1;
     }
 

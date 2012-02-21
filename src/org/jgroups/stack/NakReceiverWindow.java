@@ -153,6 +153,8 @@ public class NakReceiverWindow {
         return retransmitter!= null? retransmitter.size() : 0;
     }
 
+    // No need to acquire the lock as this method is called via JMX, and stale values are acceptable. Ditto for the next
+    // few methods below
     public int getRetransmitTableSize() {return xmit_table.size();}
 
     public int getRetransmitTableCapacity() {return xmit_table.capacity();}
@@ -162,7 +164,13 @@ public class NakReceiverWindow {
     public long getRetransmitTableOffset() {return xmit_table.getOffset();}
 
     public void compact() {
-        xmit_table.compact();
+        lock.lock();
+        try {
+            xmit_table.compact();
+        }
+        finally {
+            lock.unlock();
+        }
     }
 
 

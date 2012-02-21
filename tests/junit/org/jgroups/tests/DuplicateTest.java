@@ -4,7 +4,7 @@ package org.jgroups.tests;
 import org.jgroups.*;
 import org.jgroups.protocols.DUPL;
 import org.jgroups.protocols.UNICAST2;
-import org.jgroups.protocols.pbcast.NAKACK;
+import org.jgroups.protocols.pbcast.NAKACK2;
 import org.jgroups.protocols.pbcast.STABLE;
 import org.jgroups.stack.ProtocolStack;
 import org.jgroups.util.Tuple;
@@ -23,7 +23,7 @@ import java.util.concurrent.ConcurrentMap;
  * Tests whether UNICAST or NAKACK prevent delivery of duplicate messages. JGroups guarantees that a message is
  * delivered once and only once. The test inserts DUPL below both UNICAST and NAKACK and makes it duplicate (1)
  * unicast, (2) multicast, (3) regular and (4) OOB messages. The receiver(s) then check for the presence of duplicate
- * messages. 
+ * messages.
  * @author Bela Ban
  */
 @Test(groups=Global.STACK_DEPENDENT,sequential=true)
@@ -136,25 +136,25 @@ public class DuplicateTest extends ChannelTestBase {
     }
 
 
-     private static void send(Channel sender_channel, Address dest, boolean oob, int num_msgs) throws Exception {
-         send(sender_channel, dest, oob, false, num_msgs);
-     }
+    private static void send(Channel sender_channel, Address dest, boolean oob, int num_msgs) throws Exception {
+        send(sender_channel, dest, oob, false, num_msgs);
+    }
 
-     private static void send(Channel sender_channel, Address dest, boolean oob, boolean mixed, int num_msgs) throws Exception {
-         long seqno=1;
-         for(int i=0; i < num_msgs; i++) {
-             Message msg=new Message(dest, null, seqno++);
-             if(mixed) {
-                 if(i % 2 == 0)
-                     msg.setFlag(Message.OOB);
-             }
-             else if(oob) {
-                 msg.setFlag(Message.OOB);
-             }
+    private static void send(Channel sender_channel, Address dest, boolean oob, boolean mixed, int num_msgs) throws Exception {
+        long seqno=1;
+        for(int i=0; i < num_msgs; i++) {
+            Message msg=new Message(dest, null, seqno++);
+            if(mixed) {
+                if(i % 2 == 0)
+                    msg.setFlag(Message.OOB);
+            }
+            else if(oob) {
+                msg.setFlag(Message.OOB);
+            }
 
-             sender_channel.send(msg);
-         }
-     }
+            sender_channel.send(msg);
+        }
+    }
 
 
     private static void sendStableMessages(JChannel ... channels) {
@@ -189,14 +189,14 @@ public class DuplicateTest extends ChannelTestBase {
         c1=createChannel(true, 3);
         DUPL dupl=new DUPL(copy_multicasts, copy_unicasts, num_incoming_copies, num_outgoing_copies);
         ProtocolStack stack=c1.getProtocolStack();
-        stack.insertProtocol(dupl, ProtocolStack.BELOW, NAKACK.class);
+        stack.insertProtocol(dupl, ProtocolStack.BELOW, NAKACK2.class);
 
         c2=createChannel(c1);
         c3=createChannel(c1);
 
         c1.setName("C1");
         c2.setName("C2");
-        c3.setName("C3");
+        c3.setName("c3");
 
         c1.connect("DuplicateTest");
         c2.connect("DuplicateTest");

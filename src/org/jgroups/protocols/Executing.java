@@ -191,6 +191,11 @@ abstract public class Executing extends Protocol {
                 // equal to 2^63-1.  This is quite large and if it 
                 // overflows it will still be positive
                 long requestId = Math.abs(counter.getAndIncrement());
+                if(requestId == Long.MIN_VALUE) {
+                    counter.set(0);
+                    requestId = Math.abs(counter.getAndIncrement());
+                }
+
                 _requestId.put(runnable, requestId);
                 sendToCoordinator(Type.RUN_REQUEST, requestId, local_addr);
                 break;

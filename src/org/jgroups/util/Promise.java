@@ -12,26 +12,25 @@ import java.util.concurrent.locks.ReentrantLock;
 /**
  * Allows a thread to submit an asynchronous request and to wait for the result. The caller may choose to check
  * for the result at a later time, or immediately and it may block or not. Both the caller and responder have to
- * know the promise.
+ * know the promise.<p/>
+ * When the result is available, {@link #hasResult()} will always return true and {@link #getResult()} will return the
+ * same result. In order to block for a different result, {@link #reset()} has to be called first.
  * @author Bela Ban
  */
 public class Promise<T> {
-    private final Lock lock=new ReentrantLock();
-    private final Condition cond=lock.newCondition();
-    private T result=null;
-    private volatile boolean hasResult=false;
+    private final Lock        lock=new ReentrantLock();
+    private final Condition   cond=lock.newCondition();
+    private T                 result=null;
+    private volatile boolean  hasResult=false;
 
-    public Lock getLock() {
-        return lock;
-    }
+    
+    public Lock      getLock() {return lock;}
+    public Condition getCond() {return cond;}
 
-    public Condition getCond() {
-        return cond;
-    }
-
+    
     /**
      * Blocks until a result is available, or timeout milliseconds have elapsed
-     * @param timeout
+     * @param timeout in ms
      * @return An object
      * @throws TimeoutException If a timeout occurred (implies that timeout > 0)
      */
@@ -46,44 +45,6 @@ public class Promise<T> {
         }
     }
 
-
-    /**
-     * Blocks until a result is available, or timeout milliseconds have elapsed. Needs to be called with lock held
-     * @param timeout
-     * @return An object
-     * @throws TimeoutException If a timeout occurred (implies that timeout > 0)
-     */
-    private T _getResultWithTimeout(long timeout) throws TimeoutException {
-        T       ret=null;
-        long    time_to_wait=timeout, start;
-        boolean timeout_occurred=false;
-
-        start=System.currentTimeMillis();
-        while(hasResult == false) {
-            if(timeout <= 0) {
-                doWait();
-            }
-            else {
-                if(time_to_wait <= 0) {
-                    timeout_occurred=true;
-                    break; // terminate the while loop
-                }
-                else {
-                    doWait(time_to_wait);
-                    time_to_wait=timeout - (System.currentTimeMillis() - start);
-                }
-            }
-        }
-
-        ret=result;
-        result=null;
-        hasResult=false;
-        if(timeout_occurred)
-            throw new TimeoutException();
-        else
-            return ret;
-    }
-
     public T getResult() {
         try {
             return getResultWithTimeout(0);
@@ -95,8 +56,8 @@ public class Promise<T> {
 
     /**
      * Returns the result, but never throws a TimeoutException; returns null instead.
-     * @param timeout
-     * @return Object
+     * @param timeout in ms
+     * @return T
      */
     public T getResult(long timeout) {
         try {
@@ -106,18 +67,6 @@ public class Promise<T> {
             return null;
         }
     }
-
-
-    private void doWait() {
-        try {cond.await();} catch(InterruptedException e) {}
-    }
-
-    private void doWait(long timeout) {
-        try {cond.await(timeout, TimeUnit.MILLISECONDS);} catch(InterruptedException e) {}
-    }
-
-
-
 
     /**
      * Checks whether result is available. Does not block.
@@ -133,8 +82,7 @@ public class Promise<T> {
     }
 
     /**
-     * Sets the result and notifies any threads
-     * waiting for it
+     * Sets the result and notifies any threads waiting for it
      */
     public void setResult(T obj) {
         lock.lock();
@@ -166,8 +114,39 @@ public class Promise<T> {
 
 
     public String toString() {
-        return "hasResult=" + Boolean.valueOf(hasResult) + ",result=" + result;
+        return "hasResult=" + Boolean.valueOf(hasResult) + ", result=" + result;
     }
+
+
+    
+
+    /**
+     * Blocks until a result is available, or timeout milliseconds have elapsed. Needs to be called with lock held
+     * @param timeout in ms
+     * @return An object
+     * @throws TimeoutException If a timeout occurred (implies that timeout > 0)
+     */
+    protected T _getResultWithTimeout(final long timeout) throws TimeoutException {
+        if(timeout <= 0) {
+            while(!hasResult) { /* Wait for responses: */
+                try {cond.await();} catch(Exception e) {}
+            }
+        }
+        else {
+            long wait_time=TimeUnit.NANOSECONDS.convert(timeout, TimeUnit.MILLISECONDS);
+            final long target_time=System.nanoTime() + wait_time;
+            while(wait_time > 0 && !hasResult) { /* Wait for responses: */
+                wait_time=target_time - System.nanoTime();
+                if(wait_time > 0) {
+                    try {cond.await(wait_time, TimeUnit.NANOSECONDS);} catch(Exception e) {}
+                }
+            }
+            if(!hasResult && wait_time <= 0)
+                throw new TimeoutException();
+        }
+        return result;
+    }
+
 
 
 }

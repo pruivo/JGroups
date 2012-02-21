@@ -12,7 +12,7 @@ import java.security.SecureRandom;
  * @author Bela Ban
  */
 public class PayloadUUID extends UUID {
-    private static final long serialVersionUID = -7920418038143502913L;
+    private static final long serialVersionUID=-7383508979230850669L;
     protected String payload;
 
     public PayloadUUID() {

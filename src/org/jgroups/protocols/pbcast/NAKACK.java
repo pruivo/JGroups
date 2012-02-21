@@ -44,9 +44,9 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
 
 
     @Property(description="Max number of messages to be removed from a NakReceiverWindow. This property might " +
-      "get removed anytime, so don't use it !")
+            "get removed anytime, so don't use it !")
     private int max_msg_batch_size=100;
-    
+
     /**
      * Retransmit messages using multicast rather than unicast. This has the advantage that, if many receivers
      * lost a message, the sender only retransmits once
@@ -63,13 +63,13 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
 
 
     @Property(description="Number of milliseconds to delay the sending of an XMIT request. We pick a random number " +
-      "in the range [1 .. xmit_req_stagger_timeout] and add this to the scheduling time of an XMIT request. " +
-      "When use_mcast_xmit is enabled, if a number of members drop messages from the same member, then chances are that, " +
-      "if staggering is enabled, somebody else already sent the XMIT request (via mcast) and we can cancel the XMIT " +
-      "request once we receive the missing messages. For unicast XMIT responses (use_mcast_xmit=false), we still have " +
-      "an advantage by not overwhelming the receiver with XMIT requests, all at the same time. 0 disabless staggering.")
+            "in the range [1 .. xmit_req_stagger_timeout] and add this to the scheduling time of an XMIT request. " +
+            "When use_mcast_xmit is enabled, if a number of members drop messages from the same member, then chances are that, " +
+            "if staggering is enabled, somebody else already sent the XMIT request (via mcast) and we can cancel the XMIT " +
+            "request once we receive the missing messages. For unicast XMIT responses (use_mcast_xmit=false), we still have " +
+            "an advantage by not overwhelming the receiver with XMIT requests, all at the same time. 0 disabless staggering.")
     protected long xmit_stagger_timeout=200;
-    
+
 
     /**
      * Ask a random member for retransmission of a missing message. If set to
@@ -126,14 +126,14 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
     int xmit_table_num_rows=5;
 
     @Property(description="Number of elements of a row of the matrix in the retransmission table (only for experts). " +
-      "The capacity of the matrix is xmit_table_num_rows * xmit_table_msgs_per_row",writable=false)
+            "The capacity of the matrix is xmit_table_num_rows * xmit_table_msgs_per_row",writable=false)
     int xmit_table_msgs_per_row=10000;
 
     @Property(description="Resize factor of the matrix in the retransmission table (only for experts)",writable=false)
     double xmit_table_resize_factor=1.2;
 
     @Property(description="Number of milliseconds after which the matrix in the retransmission table " +
-      "is compacted (only for experts)",writable=false)
+            "is compacted (only for experts)",writable=false)
     long xmit_table_max_compaction_time=10 * 60 * 1000;
 
     /* -------------------------------------------------- JMX ---------------------------------------------------------- */
@@ -219,7 +219,7 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
 
 
     @ManagedAttribute(description="Returns the number of bytes of all messages in all NakReceiverWindows. To compute " +
-      "the size, Message.getLength() is used")
+            "the size, Message.getLength() is used")
     public long getSizeOfAllMessages() {
         long retval=0;
         for(NakReceiverWindow win: xmit_table.values())
@@ -228,7 +228,7 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
     }
 
     @ManagedAttribute(description="Returns the number of bytes of all messages in all NakReceiverWindows. To compute " +
-      "the size, Message.size() is used")
+            "the size, Message.size() is used")
     public long getSizeOfAllMessagesInclHeaders() {
         long retval=0;
         for(NakReceiverWindow win: xmit_table.values())
@@ -394,9 +394,9 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
         for(Map.Entry<Address,NakReceiverWindow> entry: xmit_table.entrySet()) {
             NakReceiverWindow win=entry.getValue();
             sb.append(entry.getKey() + ": ").append(win.getRetransmitTableSize())
-              .append(", offset=").append(win.getRetransmitTableOffset())
-              .append(" (capacity=" + win.getRetransmitTableCapacity())
-              .append(", fill factor=" + win.getRetransmitTableFillFactor() + "%)\n");
+                    .append(", offset=").append(win.getRetransmitTableOffset())
+                    .append(" (capacity=" + win.getRetransmitTableCapacity())
+                    .append(", fill factor=" + win.getRetransmitTableFillFactor() + "%)\n");
         }
         return sb.toString();
     }
@@ -486,9 +486,6 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
                 view=tmp_view;
                 adjustReceivers(members);
                 is_server=true;  // check vids from now on
-
-                Set<Address> tmp=new LinkedHashSet<Address>(members);
-                tmp.add(null); // for null destination (= mcast)
                 break;
 
             case Event.BECOME_SERVER:
@@ -521,6 +518,15 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
                     }
                 }
                 return null;
+
+            case Event.ADD_TO_XMIT_TABLE:
+                msg=(Message)evt.getArg();
+                dest=msg.getDest();
+                if(dest != null || msg.isFlagSet(Message.NO_RELIABILITY))
+                    return null; // unicast address: not null and not mcast, pass down unchanged
+
+                send(evt, msg, false); // add to retransmit window, but don't send (we want to avoid the unneeded traffic)
+                return null;    // don't pass down the stack
         }
 
         return down_prot.down(evt);
@@ -536,61 +542,61 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
     public Object up(Event evt) {
         switch(evt.getType()) {
 
-        case Event.MSG:
-            Message msg=(Message)evt.getArg();
-            if(msg.isFlagSet(Message.NO_RELIABILITY))
-                break;
-            NakAckHeader hdr=(NakAckHeader)msg.getHeader(this.id);
-            if(hdr == null)
-                break;  // pass up (e.g. unicast msg)
+            case Event.MSG:
+                Message msg=(Message)evt.getArg();
+                if(msg.isFlagSet(Message.NO_RELIABILITY))
+                    break;
+                NakAckHeader hdr=(NakAckHeader)msg.getHeader(this.id);
+                if(hdr == null)
+                    break;  // pass up (e.g. unicast msg)
 
-            if(!is_server) { // discard messages while not yet server (i.e., until JOIN has returned)
-                if(log.isTraceEnabled())
-                    log.trace("message " + msg.getSrc() + "::" + hdr.seqno + " was discarded (not yet server)");
-                return null;
-            }
-
-            // Changed by bela Jan 29 2003: we must not remove the header, otherwise further xmit requests will fail !
-            //hdr=(NakAckHeader)msg.removeHeader(getName());
-
-            switch(hdr.type) {
-
-            case NakAckHeader.MSG:
-                handleMessage(msg, hdr);
-                return null;        // transmitter passes message up for us !
-
-            case NakAckHeader.XMIT_REQ:
-                if(hdr.range == null) {
-                    if(log.isErrorEnabled()) {
-                        log.error("XMIT_REQ: range of xmit msg is null; discarding request from " + msg.getSrc());
-                    }
+                if(!is_server) { // discard messages while not yet server (i.e., until JOIN has returned)
+                    if(log.isTraceEnabled())
+                        log.trace(local_addr + ": message " + msg.getSrc() + "::" + hdr.seqno + " was discarded (not yet server)");
                     return null;
                 }
-                handleXmitReq(msg.getSrc(), hdr.range.low, hdr.range.high, hdr.sender);
-                return null;
 
-            case NakAckHeader.XMIT_RSP:
-                handleXmitRsp(msg, hdr);
-                return null;
+                // Changed by bela Jan 29 2003: we must not remove the header, otherwise further xmit requests will fail !
+                //hdr=(NakAckHeader)msg.removeHeader(getName());
 
-            default:
-                if(log.isErrorEnabled()) {
-                    log.error("NakAck header type " + hdr.type + " not known !");
+                switch(hdr.type) {
+
+                    case NakAckHeader.MSG:
+                        handleMessage(msg, hdr);
+                        return null;        // transmitter passes message up for us !
+
+                    case NakAckHeader.XMIT_REQ:
+                        if(hdr.range == null) {
+                            if(log.isErrorEnabled()) {
+                                log.error("XMIT_REQ: range of xmit msg is null; discarding request from " + msg.getSrc());
+                            }
+                            return null;
+                        }
+                        handleXmitReq(msg.getSrc(), hdr.range.low, hdr.range.high, hdr.sender);
+                        return null;
+
+                    case NakAckHeader.XMIT_RSP:
+                        handleXmitRsp(msg, hdr);
+                        return null;
+
+                    default:
+                        if(log.isErrorEnabled()) {
+                            log.error("NakAck header type " + hdr.type + " not known !");
+                        }
+                        return null;
                 }
-                return null;
-            }
 
-        case Event.STABLE:  // generated by STABLE layer. Delete stable messages passed in arg
-            stable((Digest)evt.getArg());
-            return null;  // do not pass up further (Bela Aug 7 2001)
+            case Event.STABLE:  // generated by STABLE layer. Delete stable messages passed in arg
+                stable((Digest)evt.getArg());
+                return null;  // do not pass up further (Bela Aug 7 2001)
 
-        case Event.SUSPECT:
-            // release the promise if rebroadcasting is in progress... otherwise we wait forever. there will be a new
-            // flush round anyway
-            if(rebroadcasting) {
-                cancelRebroadcasting();
-            }
-            break;
+            case Event.SUSPECT:
+                // release the promise if rebroadcasting is in progress... otherwise we wait forever. there will be a new
+                // flush round anyway
+                if(rebroadcasting) {
+                    cancelRebroadcasting();
+                }
+                break;
         }
         return up_prot.up(evt);
     }
@@ -609,13 +615,13 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
      * Made seqno increment and adding to sent_msgs atomic, e.g. seqno won't get incremented if adding to
      * sent_msgs fails e.g. due to an OOM (see http://jira.jboss.com/jira/browse/JGRP-179). bela Jan 13 2006
      */
-    private void send(Event evt, Message msg) {
+    protected void send(Event evt, Message msg, boolean pass_down) {
         if(msg == null)
             throw new NullPointerException("msg is null; event is " + evt);
 
         if(!running) {
             if(log.isTraceEnabled())
-                log.trace("[" + local_addr + "] discarded message as we're not in the 'running' state, message: " + msg);
+                log.trace(local_addr + ": discarded message as we're not in the 'running' state, message: " + msg);
             return;
         }
 
@@ -631,7 +637,7 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
             msg.setSrc(local_addr); // this needs to be done so we can check whether the message sender is the local_addr
 
         msg_id=seqno.incrementAndGet();
-        long sleep=500;
+        long sleep=10;
         while(running) {
             try {
                 msg.putHeader(this.id, NakAckHeader.createMessageHeader(msg_id));
@@ -645,6 +651,9 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
             }
         }
 
+        if(!pass_down)
+            return;
+
         try { // moved down_prot.down() out of synchronized clause (bela Sept 7 2006) http://jira.jboss.com/jira/browse/JGRP-300
             if(log.isTraceEnabled())
                 log.trace("sending " + local_addr + "#" + msg_id);
@@ -657,6 +666,9 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
         }
     }
 
+    protected void send(Event evt, Message msg) {
+        send(evt, msg, true);
+    }
 
 
     /**
@@ -677,7 +689,7 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
                 return;
             if(log.isWarnEnabled() && log_discard_msgs)
                 log.warn(local_addr + ": dropped message " + hdr.seqno + " from " + sender +
-                           " (sender not in table " + xmit_table.keySet() +"), view=" + view);
+                        " (sender not in table " + xmit_table.keySet() +"), view=" + view);
             return;
         }
 
@@ -776,7 +788,7 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
                 // don't print the table unless we are in trace mode because it can be LARGE
                 if (log.isTraceEnabled()) {
                     sb.append(":\n").append(printMessages());
-                } 
+                }
                 if(print_stability_history_on_failed_xmit) {
                     sb.append(" (stability history:\n").append(printStabilityHistory());
                 }
@@ -1083,7 +1095,7 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
         if(digest == null)
             return;
 
-        StringBuilder sb=new StringBuilder(merge? "\n[mergeDigest()]\n" : "\n[setDigest()]\n");
+        StringBuilder sb=new StringBuilder(merge? "\n[" + local_addr + " mergeDigest()]\n" : "\n["+local_addr + " setDigest()]\n");
         sb.append("existing digest:  " + getDigest()).append("\nnew digest:       " + digest);
 
         boolean set_own_seqno=false;
@@ -1125,8 +1137,8 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
 
     private NakReceiverWindow createNakReceiverWindow(Address sender, long initial_seqno) {
         NakReceiverWindow win=new NakReceiverWindow(sender, this, initial_seqno, timer, use_range_based_retransmitter,
-                                                    xmit_table_num_rows, xmit_table_msgs_per_row,
-                                                    xmit_table_resize_factor, xmit_table_max_compaction_time, false);
+                xmit_table_num_rows, xmit_table_msgs_per_row,
+                xmit_table_resize_factor, xmit_table_max_compaction_time, false);
 
         if(exponential_backoff > 0)
             win.setRetransmitTimeouts(new ExponentialInterval(exponential_backoff));
@@ -1185,7 +1197,7 @@ public class NAKACK extends Protocol implements Retransmitter.RetransmitCommand,
                     if(log.isTraceEnabled()) {
                         log.trace("my_highest_rcvd (" + my_highest_rcvd + ") < stability_highest_rcvd (" +
                                 stability_highest_rcvd + "): requesting retransmission of " +
-                                    member + '#' + stability_highest_rcvd);
+                                member + '#' + stability_highest_rcvd);
                     }
                     retransmit(stability_highest_rcvd, stability_highest_rcvd, member);
                 }

@@ -201,13 +201,15 @@ public class MessageTest {
     }
 
 
-
-
     public static void testCopy() {
         Message m1=new Message(null, null, "Bela Ban");
+        m1.setFlag(Message.Flag.OOB);
+        m1.setTransientFlag(Message.TransientFlag.OOB_DELIVERED);
         Message m2=m1.copy();
         Assert.assertEquals(m1.getOffset(), m2.getOffset());
         Assert.assertEquals(m1.getLength(), m2.getLength());
+        assert m2.isFlagSet(Message.Flag.OOB);
+        assert m2.isTransientFlagSet(Message.TransientFlag.OOB_DELIVERED);
     }
 
 

@@ -18,7 +18,8 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.lang.management.ManagementFactory;
-import java.net.*;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
 import java.text.NumberFormat;
 import java.util.*;
 import java.util.concurrent.*;
@@ -218,6 +219,11 @@ public abstract class TP extends Protocol {
     		defaultValueIPv4="224.0.75.75",defaultValueIPv6="ff0e::0:75:75")
     protected InetAddress diagnostics_addr=null;
 
+    @Property(converter=PropertyConverters.NetworkInterfaceList.class,
+              description="Comma delimited list of interfaces (IP addresses or interface names) that the " +
+                "diagnostics multicast socket should bind to")
+    protected List<NetworkInterface> diagnostics_bind_interfaces=null;
+
     @Property(description="Port for diagnostic probing. Default is 7500")
     protected int diagnostics_port=7500;
 
@@ -248,7 +254,7 @@ public abstract class TP extends Protocol {
 
     @Experimental
     @Property(description="The max number of elements in a bundler if the bundler supports size limitations")
-    protected int bundler_capacity=20000;
+    protected int bundler_capacity=200000;
 
 
     @Property(name="max_bundle_size", description="Maximum number of bytes for messages to be queued until they are sent")
@@ -414,7 +420,17 @@ public abstract class TP extends Protocol {
      * members contains *all* members from all channels sitting on the shared transport */
     protected final Set<Address> members=new CopyOnWriteArraySet<Address>();
 
-    protected ThreadGroup pool_thread_group=new ThreadGroup(Util.getGlobalThreadGroup(), "Thread Pools");
+    // Used to be the global thread group (moved here from Util)
+    protected ThreadGroup channel_thread_group=new ThreadGroup("JGroups channel") {
+            public void uncaughtException(Thread t, Throwable e) {
+                log.error("uncaught exception in " + t + " (thread group=" + this + " )", e);
+                final ThreadGroup tgParent = getParent();
+                if(tgParent != null)
+                    tgParent.uncaughtException(t,e);
+            }
+        };
+
+    protected ThreadGroup pool_thread_group=new ThreadGroup(getChannelThreadGroup(), "Thread Pools");
 
     /** Keeps track of connects and disconnects, in order to start and stop threads */
     protected int connect_count=0;
@@ -479,7 +495,7 @@ public abstract class TP extends Protocol {
      * <br/>
      * The keys are logical addresses, the values physical addresses
      */
-    protected LazyRemovalCache<Address,PhysicalAddress> logical_addr_cache=null;
+    protected LazyRemovalCache<Address,PhysicalAddress> logical_addr_cache;
 
     // last time we sent a discovery request
     protected long last_discovery_request=0;
@@ -503,7 +519,7 @@ public abstract class TP extends Protocol {
 
     /** Cache keeping track of WHO_HAS requests for physical addresses (given a logical address) and expiring
      * them after 5000ms */
-    protected AgeOutCache<Address> who_has_cache=null;
+    protected AgeOutCache<Address> who_has_cache;
 
 
     /**
@@ -554,6 +570,10 @@ public abstract class TP extends Protocol {
 
     public ThreadGroup getPoolThreadGroup() {
         return pool_thread_group;
+    }
+
+    public ThreadGroup getChannelThreadGroup() {
+        return channel_thread_group;
     }
 
     public void setThreadPoolQueueEnabled(boolean flag) {thread_pool_queue_enabled=flag;}
@@ -801,11 +821,11 @@ public abstract class TP extends Protocol {
 
         // Create the default thread factory
         if(global_thread_factory == null)
-            global_thread_factory=new DefaultThreadFactory(Util.getGlobalThreadGroup(), "", false);
+            global_thread_factory=new DefaultThreadFactory(getChannelThreadGroup(), "", false);
 
         // Create the timer and the associated thread factory - depends on singleton_name
         if(timer_thread_factory == null)
-            timer_thread_factory=new LazyThreadFactory(Util.getGlobalThreadGroup(), "Timer", true, true);
+            timer_thread_factory=new LazyThreadFactory(getChannelThreadGroup(), "Timer", true, true);
         if(isSingleton())
             timer_thread_factory.setIncludeClusterName(false);
 
@@ -840,7 +860,7 @@ public abstract class TP extends Protocol {
             }
         }
 
-        who_has_cache=new AgeOutCache<Address>(timer, 5000L);
+        who_has_cache=new AgeOutCache<Address>(timer, 2000L);
 
         Util.verifyRejectionPolicy(oob_thread_pool_rejection_policy);
         Util.verifyRejectionPolicy(thread_pool_rejection_policy);
@@ -938,8 +958,8 @@ public abstract class TP extends Protocol {
         if(enable_diagnostics) {
             boolean diag_handler_created=diag_handler == null;
             if(diag_handler == null)
-                diag_handler=new DiagnosticsHandler(diagnostics_addr, diagnostics_port, log, getSocketFactory(),
-                                                    getThreadFactory());
+                diag_handler=new DiagnosticsHandler(diagnostics_addr, diagnostics_port, diagnostics_bind_interfaces,
+                                                    log, getSocketFactory(), getThreadFactory());
 
             diag_handler.registerProbeHandler(new DiagnosticsHandler.ProbeHandler() {
                 public Map<String, String> handleProbe(String... keys) {
@@ -1265,17 +1285,30 @@ public abstract class TP extends Protocol {
 
 
     protected void sendToSingleMember(Address dest, byte[] buf, int offset, int length) throws Exception {
-        PhysicalAddress physical_dest=dest instanceof PhysicalAddress? (PhysicalAddress)dest : getPhysicalAddressFromCache(dest);
-        if(physical_dest == null) {
-            if(!who_has_cache.contains(dest)) {
-                who_has_cache.add(dest);
-                if(log.isWarnEnabled())
-                    log.warn(local_addr+  ": no physical address for " + dest + ", dropping message");
-                up(new Event(Event.GET_PHYSICAL_ADDRESS, dest));
-            }
+        if(dest instanceof PhysicalAddress) {
+            sendUnicast((PhysicalAddress)dest, buf, offset, length);
             return;
         }
-        sendUnicast(physical_dest, buf, offset, length);
+
+        PhysicalAddress physical_dest=null;
+        int cnt=1;
+        long sleep_time=20;
+        while((physical_dest=getPhysicalAddressFromCache(dest)) == null && cnt++ <= 10) {
+            if(!who_has_cache.contains(dest)) {
+                who_has_cache.add(dest);
+                Util.sleepRandom(1, 500); // to prevent a discovery flood in large clusters (by staggering requests)
+                if((physical_dest=getPhysicalAddressFromCache(dest)) != null)
+                    break;
+                up(new Event(Event.GET_PHYSICAL_ADDRESS, dest));
+            }
+            Util.sleep(sleep_time);
+            sleep_time=Math.min(1000, sleep_time *2);
+        }
+
+        if(physical_dest != null)
+            sendUnicast(physical_dest, buf, offset, length);
+        else if(log.isWarnEnabled())
+            log.warn(local_addr+  ": no physical address for " + dest + ", dropping message");
     }
 
 
@@ -1458,6 +1491,9 @@ public abstract class TP extends Protocol {
             case Event.GET_PHYSICAL_ADDRESS:
                 return getPhysicalAddressFromCache((Address)evt.getArg());
 
+            case Event.GET_PHYSICAL_ADDRESSES:
+                return getAllPhysicalAddressesFromCache();
+
             case Event.GET_LOGICAL_PHYSICAL_MAPPINGS:
                 return logical_addr_cache.contents();
 
@@ -1605,6 +1641,10 @@ public abstract class TP extends Protocol {
         return logical_addr != null? logical_addr_cache.get(logical_addr) : null;
     }
 
+    protected Collection<PhysicalAddress> getAllPhysicalAddressesFromCache() {
+        return logical_addr_cache.nonRemovedValues();
+    }
+
     protected void removeLogicalAddressFromCache(Address logical_addr) {
         if(logical_addr != null) {
             logical_addr_cache.remove(logical_addr);
@@ -1729,7 +1769,7 @@ public abstract class TP extends Protocol {
         int                                num_msgs=0;
         @GuardedBy("lock")
         int                                num_bundling_tasks=0;
-        long                               last_bundle_time;
+        long                               last_bundle_time; // in nanoseconds
         final ReentrantLock                lock=new ReentrantLock();
         final Log                          log=LogFactory.getLog(getClass());
 
@@ -1779,7 +1819,7 @@ public abstract class TP extends Protocol {
             SingletonAddress dest=new SingletonAddress(cluster_name, dst);
 
             if(msgs.isEmpty())
-                last_bundle_time=System.currentTimeMillis();
+                last_bundle_time=System.nanoTime();
             List<Message> tmp=msgs.get(dest);
             if(tmp == null) {
                 tmp=new LinkedList<Message>();
@@ -1797,13 +1837,13 @@ public abstract class TP extends Protocol {
          */
         private void sendBundledMessages(final Map<SingletonAddress,List<Message>> msgs) {
             if(log.isTraceEnabled()) {
-                long stop=System.currentTimeMillis();
                 double percentage=100.0 / max_bundle_size * count;
                 StringBuilder sb=new StringBuilder("sending ").append(num_msgs).append(" msgs (");
                 num_msgs=0;
                 sb.append(count).append(" bytes (" + f.format(percentage) + "% of max_bundle_size)");
                 if(last_bundle_time > 0) {
-                    sb.append(", collected in ").append(stop-last_bundle_time).append("ms) ");
+                    long diff=(System.nanoTime() - last_bundle_time) / 1000000;
+                    sb.append(", collected in ").append(diff).append("ms) ");
                 }
                 sb.append(" to ").append(msgs.size()).append(" destination(s)");
                 if(msgs.size() > 1) sb.append(" (dests=").append(msgs.keySet()).append(")");
@@ -1925,24 +1965,26 @@ public abstract class TP extends Protocol {
 
 
         public void run() {
-            next_bundle_time=System.currentTimeMillis() + max_bundle_timeout;
+            long max_bundle_timeout_in_nanos=TimeUnit.MILLISECONDS.toNanos(max_bundle_timeout);
+
+            next_bundle_time=System.nanoTime() + max_bundle_timeout_in_nanos;
             while(running) {
                 Message msg=null;
-                long sleep_time=next_bundle_time - System.currentTimeMillis();
+                long sleep_time=next_bundle_time - System.nanoTime();
 
                 try {
                     if(count == 0)
                         msg=buffer.take();
                     else
-                        msg=buffer.poll(sleep_time, TimeUnit.MILLISECONDS);
+                        msg=buffer.poll(sleep_time, TimeUnit.NANOSECONDS);
 
                     long size=msg != null? msg.size() : 0;
                     boolean send_msgs=(msg != null && count + size >= max_bundle_size) ||
                             buffer.size() >= threshold ||
-                            System.currentTimeMillis() >= next_bundle_time;
+                            System.nanoTime() >= next_bundle_time;
 
                     if(send_msgs) {
-                        next_bundle_time=System.currentTimeMillis() + max_bundle_timeout;
+                        next_bundle_time=System.nanoTime() + max_bundle_timeout_in_nanos;
                         try {
                             if(!msgs.isEmpty()) {
                                 sendBundledMessages(msgs);
@@ -2069,7 +2111,7 @@ public abstract class TP extends Protocol {
             this.up_prot=up;
             this.down_prot=down;
             this.header=new TpHeader(cluster_name);
-            this.factory=new DefaultThreadFactory(Util.getGlobalThreadGroup(), "", false);
+            this.factory=new DefaultThreadFactory(getChannelThreadGroup(), "", false);
             factory.setPattern(pattern);
             if(local_addr != null)
                 factory.setAddress(local_addr.toString());

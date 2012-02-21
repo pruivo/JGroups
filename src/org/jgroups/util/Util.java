@@ -7,7 +7,6 @@ import org.jgroups.blocks.Connection;
 import org.jgroups.conf.ClassConfigurator;
 import org.jgroups.jmx.JmxConfigurator;
 import org.jgroups.logging.Log;
-import org.jgroups.logging.LogFactory;
 import org.jgroups.protocols.*;
 import org.jgroups.protocols.pbcast.FLUSH;
 import org.jgroups.protocols.pbcast.GMS;
@@ -24,6 +23,7 @@ import java.lang.management.ThreadInfo;
 import java.lang.management.ThreadMXBean;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.net.*;
 import java.nio.ByteBuffer;
 import java.nio.channels.WritableByteChannel;
@@ -77,22 +77,7 @@ public class Util {
      * reduces the amount of log data */
     public static int MAX_LIST_PRINT_SIZE=20;
 
-    /**
-     * Global thread group to which all (most!) JGroups threads belong
-     */
-    private static ThreadGroup GLOBAL_GROUP=new ThreadGroup("JGroups") {
-        public void uncaughtException(Thread t, Throwable e) {
-            LogFactory.getLog("org.jgroups").error("uncaught exception in " + t + " (thread group=" + GLOBAL_GROUP + " )", e);
-            final ThreadGroup tgParent = getParent();
-            if(tgParent != null) {
-                tgParent.uncaughtException(t,e);
-            }
-        }
-    };
-
-    public static ThreadGroup getGlobalThreadGroup() {
-        return GLOBAL_GROUP;
-    }
+    
 
     public static enum AddressScope {GLOBAL, SITE_LOCAL, LINK_LOCAL, LOOPBACK, NON_LOOPBACK};
 
@@ -211,6 +196,11 @@ public class Util {
     }
 
 
+    public static String bold(String msg) {
+        StringBuilder sb=new StringBuilder("\033[1m");
+        sb.append(msg).append("\033[0m");
+        return sb.toString();
+    }
 
 
     /**
@@ -384,6 +374,7 @@ public class Util {
     public static byte clearFlags(byte bits, byte flag) {
         return bits &= ~flag;
     }
+
 
 
     /**
@@ -842,6 +833,20 @@ public class Util {
         return retval;
     }
 
+    public static int size(String s) {
+        int retval=Global.BYTE_SIZE;
+        if(s != null)
+            retval+=s.length() +2;
+        return retval;
+    }
+
+    public static int size(byte[] buf) {
+        int retval=Global.BYTE_SIZE + Global.INT_SIZE;
+        if(buf != null)
+            retval+=buf.length;
+        return retval;
+    }
+
     private static Address readOtherAddress(DataInput in) throws Exception {
         short magic_number=in.readShort();
         Class<Address> cl=ClassConfigurator.get(magic_number);
@@ -1093,6 +1098,44 @@ public class Util {
             }
         }
         return sb.toString();
+    }
+
+    public static byte[] readFileContents(String filename) throws IOException {
+        File file=new File(filename);
+        if(!file.exists())
+            throw new FileNotFoundException(filename);
+        long length=file.length();
+        byte contents[]=new byte[(int)length];
+        InputStream in=new BufferedInputStream(new FileInputStream(filename));
+        int bytes_read=0;
+
+        for(;;) {
+            int tmp=in.read(contents, bytes_read, (int)(length - bytes_read));
+            if(tmp == -1)
+                break;
+            bytes_read+=tmp;
+            if(bytes_read == length)
+                break;
+        }
+        return contents;
+    }
+
+    public static byte[] readFileContents(InputStream input) throws IOException {
+        byte contents[]=new byte[10000], buf[]=new byte[1024];
+        InputStream in=new BufferedInputStream(input);
+        int bytes_read=0;
+
+        for(;;) {
+            int tmp=in.read(buf, 0, buf.length);
+            if(tmp == -1)
+                break;
+            System.arraycopy(buf, 0, contents, bytes_read, tmp);
+            bytes_read+=tmp;
+        }
+
+        byte[] retval=new byte[bytes_read];
+        System.arraycopy(contents, 0, retval, 0, bytes_read);
+        return retval;
     }
 
 
@@ -1716,7 +1759,7 @@ public class Util {
     }
 
 
-   /* public static String[] components(String path, String separator) {
+   /* public static String[] commands(String path, String separator) {
         if(path == null || path.length() == 0)
             return null;
         String[] tmp=path.split(separator + "+"); // multiple separators could be present
@@ -2206,6 +2249,19 @@ public class Util {
         return false;
     }
 
+    public static List<View> detectDifferentViews(Map<Address,View> map) {
+        final List<View> ret=new ArrayList<View>();
+        for(View view: map.values()) {
+            if(view == null)
+                continue;
+            ViewId vid=view.getVid();
+            if(!Util.containsViewId(ret, vid))
+                ret.add(view);
+        }
+        return ret;
+    }
+
+
     /**
      * Determines the members which take part in a merge. The resulting list consists of all merge coordinators
      * plus members outside a merge partition, e.g. for views A={B,A,C}, B={B,C} and C={B,C}, the merge coordinator
@@ -2277,6 +2333,18 @@ public class Util {
         return 0;
     }
 
+    public static int getRank(Collection<Address> members, Address addr) {
+        if(members == null || addr == null)
+            return -1;
+        int index=0;
+        for(Iterator<Address> it=members.iterator(); it.hasNext();) {
+            Address mbr=it.next();
+            if(mbr.equals(addr))
+                return index+1;
+            index++;
+        }
+        return -1;
+    }
 
     public static Object pickRandomElement(List list) {
         if(list == null) return null;
@@ -2652,6 +2720,81 @@ public class Util {
             }
         }
         return field;
+    }
+
+    public static void setField(Field field, Object target, Object value) {
+           if(!Modifier.isPublic(field.getModifiers())) {
+               field.setAccessible(true);
+           }
+           try {
+               field.set(target, value);
+           }
+           catch(IllegalAccessException iae) {
+               throw new IllegalArgumentException("Could not set field " + field, iae);
+           }
+       }
+
+       public static Object getField(Field field, Object target) {
+           if(!Modifier.isPublic(field.getModifiers())) {
+               field.setAccessible(true);
+           }
+           try {
+               return field.get(target);
+           }
+           catch(IllegalAccessException iae) {
+               throw new IllegalArgumentException("Could not get field " + field, iae);
+           }
+       }
+
+
+    public static <T> Set<Class<T>> findClassesAssignableFrom(String packageName, Class<T> assignableFrom)
+      throws IOException, ClassNotFoundException {
+        ClassLoader loader = Thread.currentThread().getContextClassLoader();
+        Set<Class<T>> classes = new HashSet<Class<T>>();
+        String path = packageName.replace('.', '/');
+        URL resource = loader.getResource(path);
+        if (resource != null) {
+            String filePath = resource.getFile();
+            if (filePath != null && new File(filePath).isDirectory()) {
+                for (String file : new File(filePath).list()) {
+                    if (file.endsWith(".class")) {
+                        String name = packageName + '.' + file.substring(0, file.indexOf(".class"));
+                        Class<T> clazz =(Class<T>)Class.forName(name);
+                        if (assignableFrom.isAssignableFrom(clazz))
+                            classes.add(clazz);
+                    }
+                }
+            }
+        }
+        return classes;
+    }
+
+    public static List<Class<?>> findClassesAnnotatedWith(String packageName, Class<? extends Annotation> a) throws IOException, ClassNotFoundException {
+        List<Class<?>> classes = new ArrayList<Class<?>>();
+        recurse(classes, packageName, a);
+        return classes;
+    }
+
+    private static void recurse(List<Class<?>> classes, String packageName, Class<? extends Annotation> a) throws ClassNotFoundException {
+        ClassLoader loader = Thread.currentThread().getContextClassLoader();
+        String path = packageName.replace('.', '/');
+        URL resource = loader.getResource(path);
+        if (resource != null) {
+            String filePath = resource.getFile();
+            if (filePath != null && new File(filePath).isDirectory()) {
+                for (String file : new File(filePath).list()) {
+                    if (file.endsWith(".class")) {
+                        String name = packageName + '.' + file.substring(0, file.indexOf(".class"));
+                        Class<?> clazz = Class.forName(name);
+                        if (clazz.isAnnotationPresent(a))
+                            classes.add(clazz);
+                    }
+                    else if (new File(filePath,file).isDirectory()) {
+                        recurse(classes, packageName + "." + file, a);
+                    }
+                }
+            }
+        }
     }
 
 
