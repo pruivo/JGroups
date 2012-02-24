@@ -142,6 +142,9 @@
                     <excludes>
                         <exclude>org/jgroups/util/JUnitXMLReporter.java</exclude>
                         <!--<exclude>org/jgroups/demos/**</exclude>-->
+                        <!-- Pedro: removed tests classes -->
+                        <exclude>org/jgroups/util/DumpData.java</exclude>
+                        <exclude>org/jgroups/util/CountTests.java</exclude>
                     </excludes>
                 </configuration>
             </plugin>
