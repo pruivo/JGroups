@@ -15,7 +15,7 @@ public class DeliverManagerImpl implements DeliverManager {
     private static final MessageInfoComparator COMPARATOR = new MessageInfoComparator();
     private final SortedSet<MessageInfo> toDeliverSet = new TreeSet<MessageInfo>(COMPARATOR);
 
-    public void addNewMessageToDeliver(MessageID messageID, Object message, long sequenceNumber) {
+    public void addNewMessageToDeliver(MessageID messageID, Message message, long sequenceNumber) {
         MessageInfo messageInfo = new MessageInfo(messageID, message, sequenceNumber);
         synchronized (toDeliverSet) {
             toDeliverSet.add(messageInfo);
@@ -72,7 +72,7 @@ public class DeliverManagerImpl implements DeliverManager {
             while (iterator.hasNext()) {
                 MessageInfo messageInfo = iterator.next();
                 if (messageInfo.isReadyToDeliver()) {
-                    toDeliver.add(messageInfo.createMessage());
+                    toDeliver.add(messageInfo.getMessage());
                     iterator.remove();
                 } else {
                     break;
@@ -91,24 +91,22 @@ public class DeliverManagerImpl implements DeliverManager {
     private static class MessageInfo {
 
         private MessageID messageID;
-        private Object message;
+        private Message message;
         private volatile long sequenceNumber;
         private volatile boolean readyToDeliver;
 
-        public MessageInfo(MessageID messageID, Object message, long sequenceNumber) {
+        public MessageInfo(MessageID messageID, Message message, long sequenceNumber) {
             if (messageID == null) {
                 throw new NullPointerException("Message ID can't be null");
             }
             this.messageID = messageID;
-            this.message = message;
+            this.message = message.copy(true, true);
             this.sequenceNumber = sequenceNumber;
             this.readyToDeliver = false;
+            this.message.setSrc(messageID.getAddress());
         }
 
-        private Message createMessage() {
-            Message message = new Message();
-            message.setSrc(messageID.getAddress());
-            message.setObject(this.message);
+        private Message getMessage() {
             return message;
         }
 

@@ -1,11 +1,10 @@
 package org.jgroups.groups.threading;
 
-import org.jgroups.Event;
 import org.jgroups.Message;
+import org.jgroups.groups.DeliverProtocol;
 import org.jgroups.groups.manager.DeliverManager;
 import org.jgroups.logging.Log;
 import org.jgroups.logging.LogFactory;
-import org.jgroups.stack.Protocol;
 
 import java.util.List;
 
@@ -18,11 +17,11 @@ import java.util.List;
 public class DeliverThread extends Thread {
     private DeliverManager deliverManager;
     private boolean running = false;
-    private Protocol groupMulticastProtocol;
+    private DeliverProtocol groupMulticastProtocol;
 
     private final Log log = LogFactory.getLog(this.getClass());
 
-    public DeliverThread(Protocol protocol) {
+    public DeliverThread(DeliverProtocol protocol) {
         super("Group-Multicast-Deliver-Thread");
         if (protocol == null) {
             throw new NullPointerException("Group Multicast Protocol can't be null");
@@ -51,10 +50,11 @@ public class DeliverThread extends Thread {
                 List<Message> messages = deliverManager.getNextMessagesToDeliver();
 
                 for (Message msg : messages) {
-                    if (log.isDebugEnabled()) {
-                        log.debug("Deliver message " + msg + " in total order");
+                    try {
+                        groupMulticastProtocol.deliver(msg);
+                    } catch(Throwable t) {
+                        log.warn("Exception caught while delivering message " + msg + ":" + t.getMessage());
                     }
-                    groupMulticastProtocol.getUpProtocol().up(new Event(Event.MSG, msg));
                 }
             } catch (InterruptedException e) {
                 //interrupted

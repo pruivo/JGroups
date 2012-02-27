@@ -19,9 +19,12 @@ public class SenderManager {
 
     private final ConcurrentMap<MessageID, MessageInfo> sentMessages = new ConcurrentHashMap<MessageID, MessageInfo>();
 
-    public void addNewMessageToSent(MessageID messageID, Set<Address> destination, long initialSequenceNumber) {
-        MessageInfo messageInfo = new MessageInfo(destination, initialSequenceNumber);
-        messageInfo.setProposeReceived(messageID.getAddress());
+    public void addNewMessageToSent(MessageID messageID, Set<Address> destination, long initialSequenceNumber,
+                                    boolean deliverToMySelf) {
+        MessageInfo messageInfo = new MessageInfo(destination, initialSequenceNumber, deliverToMySelf);
+        if (deliverToMySelf) {
+            messageInfo.setProposeReceived(messageID.getAddress());
+        }
         sentMessages.put(messageID, messageInfo);
     }
 
@@ -33,8 +36,9 @@ public class SenderManager {
         return NOT_READY;
     }
 
-    public void markSent(MessageID messageID) {
-        sentMessages.remove(messageID);
+    public boolean markSent(MessageID messageID) {
+        MessageInfo messageInfo =  sentMessages.remove(messageID);
+        return messageInfo != null && messageInfo.toSelfDeliver;
     }
 
     public Set<Address> getDestination(MessageID messageID) {
@@ -57,11 +61,13 @@ public class SenderManager {
         private long highestSequenceNumberReceived;
         private BitSet receivedPropose;
         private boolean finalMessageSent = false;
+        private boolean toSelfDeliver = false;
 
-        private MessageInfo(Set<Address> addresses, long sequenceNumber) {
+        private MessageInfo(Set<Address> addresses, long sequenceNumber, boolean selfDeliver) {
             this.destination = new ArrayList<Address>(addresses);
             this.highestSequenceNumberReceived = sequenceNumber;
             createNewBitSet(addresses.size());
+            this.toSelfDeliver = selfDeliver;
         }
 
         private synchronized boolean addPropose(Address from, long sequenceNumber) {

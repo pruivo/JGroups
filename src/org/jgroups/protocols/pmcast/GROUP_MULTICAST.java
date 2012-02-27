@@ -6,6 +6,7 @@ import org.jgroups.Message;
 import org.jgroups.View;
 import org.jgroups.annotations.MBean;
 import org.jgroups.annotations.ManagedOperation;
+import org.jgroups.groups.DeliverProtocol;
 import org.jgroups.groups.GroupAddress;
 import org.jgroups.groups.MessageID;
 import org.jgroups.groups.header.GroupMulticastHeader;
@@ -30,7 +31,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * @since 4.0
  */
 @MBean(description = "Implementation of Total Order Multicast based on Skeen's Algorithm")
-public class GROUP_MULTICAST extends Protocol {
+public class GROUP_MULTICAST extends Protocol implements DeliverProtocol {
     //managers
     private DeliverManagerImpl deliverManager;
     private SenderManager senderManager;
@@ -177,7 +178,7 @@ public class GROUP_MULTICAST extends Protocol {
             header.addDestinations(destination);
             message.putHeader(this.id, header);
 
-            senderManager.addNewMessageToSent(messageID, destination, sequenceNumber);
+            senderManager.addNewMessageToSent(messageID, destination, sequenceNumber, localAddressInDestination);
 
             if (log.isTraceEnabled()) {
                 log.trace("Sending message " + messageID + " to " + destination + " with initial sequence number of " +
@@ -188,7 +189,7 @@ public class GROUP_MULTICAST extends Protocol {
                 Set<Address> destinationWithoutLocalAddress = new HashSet<Address>(destination);
                 destinationWithoutLocalAddress.remove(localAddress);
 
-                deliverManager.addNewMessageToDeliver(messageID, message.getObject(), sequenceNumber);
+                deliverManager.addNewMessageToDeliver(messageID, message, sequenceNumber);
 
                 senderThread.addMessage(message, destinationWithoutLocalAddress);
             } else {
@@ -222,7 +223,7 @@ public class GROUP_MULTICAST extends Protocol {
                 case GroupMulticastHeader.MESSAGE:
                     //create the sequence number and put it in deliver manager
                     long myProposeSequenceNumber = sequenceNumberManager.updateAndGet(header.getSequencerNumber());
-                    deliverManager.addNewMessageToDeliver(messageID, message.getObject(), myProposeSequenceNumber);
+                    deliverManager.addNewMessageToDeliver(messageID, message, myProposeSequenceNumber);
 
                     if (log.isTraceEnabled()) {
                         log.trace("Received the message with " + header + ". The proposed sequence number is " +
@@ -244,13 +245,14 @@ public class GROUP_MULTICAST extends Protocol {
                     senderThread.addUnicastMessage(proposeMessage);
                     break;
                 case GroupMulticastHeader.SEQ_NO_PROPOSE:
-                    long finalSequenceNumber = senderManager.addPropose(messageID, message.getSrc(),
-                            header.getSequencerNumber());
-
                     if (log.isTraceEnabled()) {
                         log.trace("Received the proposed sequence number message with " + header + " from " +
                                 message.getSrc());
                     }
+
+                    sequenceNumberManager.update(header.getSequencerNumber());
+                    long finalSequenceNumber = senderManager.addPropose(messageID, message.getSrc(),
+                            header.getSequencerNumber());
 
                     if (finalSequenceNumber != SenderManager.NOT_READY) {
                         Message finalMessage = new Message();
@@ -274,8 +276,10 @@ public class GROUP_MULTICAST extends Protocol {
                         }
 
                         senderThread.addMessage(finalMessage, destination);
-                        senderManager.markSent(messageID);
-                        deliverManager.markReadyToDeliver(messageID, finalSequenceNumber);
+                        //returns true if we are in destination set
+                        if (senderManager.markSent(messageID)) {
+                            deliverManager.markReadyToDeliver(messageID, finalSequenceNumber);
+                        }
                     }
 
                     break;
@@ -284,6 +288,7 @@ public class GROUP_MULTICAST extends Protocol {
                         log.trace("Received the final sequence number message with " + header);
                     }
 
+                    sequenceNumberManager.update(header.getSequencerNumber());
                     deliverManager.markReadyToDeliver(messageID, header.getSequencerNumber());
                     break;
                 default:
@@ -292,6 +297,17 @@ public class GROUP_MULTICAST extends Protocol {
         } catch (InterruptedException e) {
             e.printStackTrace();  // TODO: Customise this generated block
         }
+    }
+
+    @Override
+    public void deliver(Message message) {
+        message.setDest(localAddress);
+
+        if (log.isDebugEnabled()) {
+            log.debug("Deliver message " + message + " in total order");
+        }
+
+        up_prot.up(new Event(Event.MSG, message));
     }
 
     @ManagedOperation
