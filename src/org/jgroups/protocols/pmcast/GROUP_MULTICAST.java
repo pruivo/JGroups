@@ -25,7 +25,7 @@ import java.util.concurrent.locks.ReentrantLock;
 /**
  * // TODO: Document this
  *
- * Total Order Multicast with three comunication steps
+ * Total Order Multicast with three communication steps
  *
  * @author pruivo
  * @since 4.0
@@ -38,8 +38,8 @@ public class GROUP_MULTICAST extends Protocol implements DeliverProtocol {
 
     //thread
     private final DeliverThread deliverThread;
-    private final SenderThread senderThread;
-
+    private final SenderThread multicastSenderThread;
+    
     //local address
     private Address localAddress;
 
@@ -50,7 +50,7 @@ public class GROUP_MULTICAST extends Protocol implements DeliverProtocol {
 
     public GROUP_MULTICAST() {
         deliverThread = new DeliverThread(this);
-        senderThread = new SenderThread(this);
+        multicastSenderThread = new SenderThread(this);
         sequenceNumberManager = new SequenceNumberManager();
         sendLock = new ReentrantLock();
         messageIdCounter = 0;
@@ -61,14 +61,14 @@ public class GROUP_MULTICAST extends Protocol implements DeliverProtocol {
         deliverManager = new DeliverManagerImpl();
         senderManager = new SenderManager();
         deliverThread.start(deliverManager);
-        senderThread.clear();
-        senderThread.start();
+        multicastSenderThread.clear();
+        multicastSenderThread.start();
     }
 
     @Override
     public void stop() {
         deliverThread.interrupt();
-        senderThread.interrupt();
+        multicastSenderThread.interrupt();
     }
 
     @Override
@@ -136,7 +136,7 @@ public class GROUP_MULTICAST extends Protocol implements DeliverProtocol {
         }
         GroupAddress groupAddress = (GroupAddress) message.getDest();
         try {
-            senderThread.addMessage(message, groupAddress.getAddresses());
+            multicastSenderThread.addMessage(message, groupAddress.getAddresses());
         } catch (InterruptedException e) {
             e.printStackTrace();  // TODO: Customise this generated block
         }
@@ -191,9 +191,9 @@ public class GROUP_MULTICAST extends Protocol implements DeliverProtocol {
 
                 deliverManager.addNewMessageToDeliver(messageID, message, sequenceNumber);
 
-                senderThread.addMessage(message, destinationWithoutLocalAddress);
+                multicastSenderThread.addMessage(message, destinationWithoutLocalAddress);
             } else {
-                senderThread.addMessage(message, destination);
+                multicastSenderThread.addMessage(message, destination);
             }
 
 
@@ -241,8 +241,10 @@ public class GROUP_MULTICAST extends Protocol implements DeliverProtocol {
                     newHeader.setSequencerNumber(myProposeSequenceNumber);
                     proposeMessage.putHeader(this.id, newHeader);
                     proposeMessage.setFlag(Message.Flag.OOB);
+                    proposeMessage.setFlag(Message.Flag.DONT_BUNDLE);
 
-                    senderThread.addUnicastMessage(proposeMessage);
+                    //multicastSenderThread.addUnicastMessage(proposeMessage);
+                    down_prot.down(new Event(Event.MSG, proposeMessage));
                     break;
                 case GroupMulticastHeader.SEQ_NO_PROPOSE:
                     if (log.isTraceEnabled()) {
@@ -264,6 +266,7 @@ public class GROUP_MULTICAST extends Protocol implements DeliverProtocol {
                         finalHeader.setSequencerNumber(finalSequenceNumber);
                         finalMessage.putHeader(this.id, finalHeader);
                         finalMessage.setFlag(Message.Flag.OOB);
+                        finalMessage.setFlag(Message.Flag.DONT_BUNDLE);
 
                         Set<Address> destination = senderManager.getDestination(messageID);
                         if (destination.contains(localAddress)) {
@@ -274,8 +277,8 @@ public class GROUP_MULTICAST extends Protocol implements DeliverProtocol {
                             log.trace("Message " + messageID + " is ready to be deliver. Final sequencer number is " +
                                     finalSequenceNumber);
                         }
-
-                        senderThread.addMessage(finalMessage, destination);
+                        
+                        multicastSenderThread.addMessage(finalMessage, destination);
                         //returns true if we are in destination set
                         if (senderManager.markSent(messageID)) {
                             deliverManager.markReadyToDeliver(messageID, finalSequenceNumber);
@@ -294,7 +297,7 @@ public class GROUP_MULTICAST extends Protocol implements DeliverProtocol {
                 default:
                     throw new IllegalStateException("Unknown header type received " + header);
             }
-        } catch (InterruptedException e) {
+        } catch (/*Interrupted*/Exception e) {
             e.printStackTrace();  // TODO: Customise this generated block
         }
     }
