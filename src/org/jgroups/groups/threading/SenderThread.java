@@ -21,6 +21,7 @@ public class SenderThread extends Thread {
 
     private boolean running = false;
     private Protocol groupMulticastProtocol;
+    private Address localAddress;
 
     private final BlockingQueue<MessageToSend> sendingQueue;
     private final Log log = LogFactory.getLog(this.getClass());
@@ -32,6 +33,10 @@ public class SenderThread extends Thread {
         }
         this.groupMulticastProtocol = protocol;
         this.sendingQueue = new LinkedBlockingQueue<MessageToSend>();
+    }
+
+    public void setLocalAddress(Address localAddress) {
+        this.localAddress = localAddress;
     }
 
     public void addMessage(Message message, Set<Address> destination) throws InterruptedException {
@@ -65,6 +70,9 @@ public class SenderThread extends Thread {
                         log.debug("Send group message " + messageToSend.message + " to " + messageToSend.destination);
                     }
                     for (Address address : messageToSend.destination) {
+                        if (address.equals(localAddress)) {
+                            continue;
+                        }
                         Message cpy = messageToSend.message.copy();
                         cpy.setDest(address);
                         groupMulticastProtocol.getDownProtocol().down(new Event(Event.MSG, cpy));

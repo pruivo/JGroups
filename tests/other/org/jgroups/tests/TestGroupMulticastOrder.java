@@ -4,7 +4,9 @@ import org.jgroups.*;
 import org.jgroups.groups.GroupAddress;
 import org.jgroups.util.Util;
 
+import javax.management.*;
 import java.io.*;
+import java.lang.management.ManagementFactory;
 import java.util.*;
 
 /**
@@ -17,6 +19,7 @@ public class TestGroupMulticastOrder {
     private static final String PROPS = "group-multicast.xml";
     private static final String CLUSTER = "test-group-multicast-cluster";
     private static final String OUTPUT_FILE_SUFFIX = "-messages.txt";
+    private static final String JMX_DOMAIN = "org.jgroups";
 
     private JChannel jChannel;
     private MyReceiver receiver;
@@ -28,6 +31,7 @@ public class TestGroupMulticastOrder {
     private long stop;
     private long sentBytes = 0;
     private long sentMessages = 0;
+    private String config;
 
     public static void main(String[] args) throws InterruptedException {
         System.out.println("==========================");
@@ -71,7 +75,8 @@ public class TestGroupMulticastOrder {
 
         TestGroupMulticastOrder testGroupMulticastOrder = new TestGroupMulticastOrder(
                 argumentsParser.getNumberOfNodes(),
-                argumentsParser.getNumberOfMessages());
+                argumentsParser.getNumberOfMessages(),
+                argumentsParser.getConfig());
 
         try {
             testGroupMulticastOrder.startTest();
@@ -110,6 +115,7 @@ public class TestGroupMulticastOrder {
         private boolean help = false;
         private boolean testOrder = false;
         private String[] filesPath = null;
+        private String config = PROPS;
 
         public ArgumentsParser(String[] args) {
             this.args = args;
@@ -141,7 +147,9 @@ public class TestGroupMulticastOrder {
                         filesPath = new String[numberOfFiles];
                         System.arraycopy(args, i + 1, filesPath, 0, numberOfFiles);
                         testOrder = true;
-                        break;
+                        i = args.length;
+                    } else if ("-config".equals(args[i])) {
+                        config = args[++i];
                     } else {
                         System.err.println("Unknown argument: " +args[i]);
                         helpAndExit();
@@ -181,6 +189,10 @@ public class TestGroupMulticastOrder {
 
         public String[] getFilesPath() {
             return filesPath;
+        }
+
+        public String getConfig() {
+            return config;
         }
     }
 
@@ -346,21 +358,22 @@ public class TestGroupMulticastOrder {
 
     // ====================== other methods ======================
 
-    public TestGroupMulticastOrder(int numberOfNodes, int numberOfMessages) {
+    public TestGroupMulticastOrder(int numberOfNodes, int numberOfMessages, String config) {
         this.numberOfNodes = numberOfNodes;
         this.numberOfMessages = numberOfMessages;
+        this.config = config;
     }
 
     private void createJChannel() throws Exception {
         System.out.println("Creating Channel");
         receiver = new MyReceiver(numberOfNodes, this);
-        jChannel = new JChannel(PROPS);
+        jChannel = new JChannel(config);
 
         jChannel.setReceiver(receiver);
         jChannel.connect(CLUSTER);
 
         receiver.waitUntilClusterIsFormed();
-        Util.registerChannel(jChannel, null);
+        Util.registerChannel(jChannel, JMX_DOMAIN);
 
         members.addAll(jChannel.getView().getMembers());
     }
@@ -473,5 +486,44 @@ public class TestGroupMulticastOrder {
 
         printSenderInfo();
         receiver.printReceiverInfo();
+        printJMXStats();
+    }
+    
+    private void printJMXStats() {
+        MBeanServer mBeanServer = ManagementFactory.getPlatformMBeanServer();
+        ObjectName groupMulticast = getGroupMulticastObjectName(mBeanServer);
+        
+        if (groupMulticast == null) {
+            System.err.println("Unable to find the GROUP_MULTICAST protocol");
+            return ;
+        }
+
+        try {
+            System.out.println("======== JMX STATS =========");
+            for (MBeanAttributeInfo mBeanAttributeInfo : mBeanServer.getMBeanInfo(groupMulticast).getAttributes()) {
+                String attribute = mBeanAttributeInfo.getName();
+                String type = mBeanAttributeInfo.getType();
+                
+                if (!type.equals("double") && !type.equals("int")) {
+                    continue;
+                }
+                                
+                System.out.println(attribute + "=" + mBeanServer.getAttribute(groupMulticast, attribute));
+            }
+            System.out.println("======== JMX STATS =========");
+        } catch (Exception e) {
+            System.err.println("Error collecting stats" + e.getLocalizedMessage());
+        }
+    }
+
+    private ObjectName getGroupMulticastObjectName(MBeanServer mBeanServer) {
+        for(ObjectName name : mBeanServer.queryNames(null, null)) {
+            if(name.getDomain().equals(JMX_DOMAIN)) {
+                if ("GROUP_MULTICAST".equals(name.getKeyProperty("protocol"))) {
+                    return name;
+                }
+            }
+        }
+        return null;
     }
 }

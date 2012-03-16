@@ -5,6 +5,7 @@ import org.jgroups.Event;
 import org.jgroups.Message;
 import org.jgroups.View;
 import org.jgroups.annotations.MBean;
+import org.jgroups.annotations.ManagedAttribute;
 import org.jgroups.annotations.ManagedOperation;
 import org.jgroups.groups.DeliverProtocol;
 import org.jgroups.groups.GroupAddress;
@@ -13,11 +14,11 @@ import org.jgroups.groups.header.GroupMulticastHeader;
 import org.jgroups.groups.manager.DeliverManagerImpl;
 import org.jgroups.groups.manager.SenderManager;
 import org.jgroups.groups.manager.SequenceNumberManager;
+import org.jgroups.groups.stats.StatsCollector;
 import org.jgroups.groups.threading.DeliverThread;
 import org.jgroups.groups.threading.SenderThread;
 import org.jgroups.stack.Protocol;
 
-import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -39,7 +40,7 @@ public class GROUP_MULTICAST extends Protocol implements DeliverProtocol {
     //thread
     private final DeliverThread deliverThread;
     private final SenderThread multicastSenderThread;
-    
+
     //local address
     private Address localAddress;
 
@@ -48,7 +49,11 @@ public class GROUP_MULTICAST extends Protocol implements DeliverProtocol {
     private long messageIdCounter;
     private final Lock sendLock;
 
+    //stats: profiling information
+    private final StatsCollector statsCollector;
+
     public GROUP_MULTICAST() {
+        statsCollector = new StatsCollector();
         deliverThread = new DeliverThread(this);
         multicastSenderThread = new SenderThread(this);
         sequenceNumberManager = new SequenceNumberManager();
@@ -63,6 +68,7 @@ public class GROUP_MULTICAST extends Protocol implements DeliverProtocol {
         deliverThread.start(deliverManager);
         multicastSenderThread.clear();
         multicastSenderThread.start();
+        statsCollector.setStatsEnabled(statsEnabled());
     }
 
     @Override
@@ -79,6 +85,7 @@ public class GROUP_MULTICAST extends Protocol implements DeliverProtocol {
                 return null;
             case Event.SET_LOCAL_ADDRESS:
                 this.localAddress = (Address) evt.getArg();
+                multicastSenderThread.setLocalAddress(localAddress);
                 break;
             case Event.VIEW_CHANGE:
                 handleViewChange((View) evt.getArg());
@@ -93,18 +100,51 @@ public class GROUP_MULTICAST extends Protocol implements DeliverProtocol {
     public Object up(Event evt) {
         switch (evt.getType()) {
             case Event.MSG:
-                handleUpMessage(evt);
+                Message message = (Message) evt.getArg();
+
+                GroupMulticastHeader header = (GroupMulticastHeader) message.getHeader(this.id);
+
+                if (header == null) {
+                    break;
+                }
+
+                switch (header.getType()) {
+                    case GroupMulticastHeader.DATA_MESSAGE:
+                        handleDataMessage(message, header);
+                        break;
+                    case GroupMulticastHeader.PROPOSE_MESSAGE:
+                        handleSequenceNumberPropose(message.getSrc(), header);
+                        break;
+                    case GroupMulticastHeader.FINAL_MESSAGE:
+                        handleFinalSequenceNumber(header);
+                        break;
+                    default:
+                        throw new IllegalStateException("Unknown header type received " + header);
+                }
                 return null;
             case Event.VIEW_CHANGE:
                 handleViewChange((View) evt.getArg());
                 break;
             case Event.SET_LOCAL_ADDRESS:
                 this.localAddress = (Address) evt.getArg();
+                multicastSenderThread.setLocalAddress(localAddress);
                 break;
             default:
                 break;
         }
         return up_prot.up(evt);
+    }
+
+    @Override
+    public void deliver(Message message) {
+        message.setDest(localAddress);
+
+        if (log.isDebugEnabled()) {
+            log.debug("Deliver message " + message + " in total order");
+        }
+
+        up_prot.up(new Event(Event.MSG, message));
+        statsCollector.incrementMessageDeliver();
     }
 
     private void handleViewChange(View view) {
@@ -137,27 +177,33 @@ public class GROUP_MULTICAST extends Protocol implements DeliverProtocol {
         GroupAddress groupAddress = (GroupAddress) message.getDest();
         try {
             multicastSenderThread.addMessage(message, groupAddress.getAddresses());
-        } catch (InterruptedException e) {
-            e.printStackTrace();  // TODO: Customise this generated block
+        } catch (Exception e) {
+            logException("Exception caugh while send a NO-TOTAL-ORDER group multicast", e);
         }
     }
 
     private void handleDownGroupMulticastMessage(Message message) {
-        if (log.isTraceEnabled()) {
+        boolean trace = log.isTraceEnabled();
+        boolean warn = log.isWarnEnabled();
+
+        long startTime = statsCollector.now();
+        long duration = -1;
+
+        if (trace) {
             log.trace("Handle group multicast message");
         }
         GroupAddress groupAddress = (GroupAddress) message.getDest();
         Set<Address> destination = groupAddress.getAddresses();
 
         if (destination.isEmpty()) {
-            if (log.isWarnEnabled()) {
+            if (warn) {
                 log.warn("Received a group address with an empty list");
             }
             throw new IllegalStateException("Group Address must have at least one element");
         }
 
         if (destination.size() == 1) {
-            if (log.isWarnEnabled()) {
+            if (warn) {
                 log.warn("Received a group address with an element");
             }
             message.setDest(destination.iterator().next());
@@ -165,156 +211,237 @@ public class GROUP_MULTICAST extends Protocol implements DeliverProtocol {
             return;
         }
 
-        boolean localAddressInDestination = destination.contains(localAddress);
+        boolean deliverToMySelf = destination.contains(localAddress);
 
         try {
             sendLock.lock();
             MessageID messageID = new MessageID(localAddress, messageIdCounter++);
             long sequenceNumber = sequenceNumberManager.getAndIncrement();
 
-            GroupMulticastHeader header = GroupMulticastHeader.createNewHeader(GroupMulticastHeader.MESSAGE,
+            GroupMulticastHeader header = GroupMulticastHeader.createNewHeader(GroupMulticastHeader.DATA_MESSAGE,
                     messageID);
             header.setSequencerNumber(sequenceNumber);
             header.addDestinations(destination);
             message.putHeader(this.id, header);
 
-            senderManager.addNewMessageToSent(messageID, destination, sequenceNumber, localAddressInDestination);
+            senderManager.addNewMessageToSent(messageID, destination, sequenceNumber, deliverToMySelf);
 
-            if (log.isTraceEnabled()) {
+            if (deliverToMySelf) {
+                deliverManager.addNewMessageToDeliver(messageID, message, sequenceNumber);
+            }
+
+            if (trace) {
                 log.trace("Sending message " + messageID + " to " + destination + " with initial sequence number of " +
                         sequenceNumber);
             }
 
-            if (localAddressInDestination) {
-                Set<Address> destinationWithoutLocalAddress = new HashSet<Address>(destination);
-                destinationWithoutLocalAddress.remove(localAddress);
+            multicastSenderThread.addMessage(message, destination);
 
-                deliverManager.addNewMessageToDeliver(messageID, message, sequenceNumber);
-
-                multicastSenderThread.addMessage(message, destinationWithoutLocalAddress);
-            } else {
-                multicastSenderThread.addMessage(message, destination);
-            }
-
-
-        } catch (InterruptedException e) {
-            if (log.isWarnEnabled()) {
-                log.warn("Interrupted exception received while handling group multicast message");
-            }
-            e.printStackTrace();  // TODO: Customise this generated block
+            duration = statsCollector.now() - startTime;
+        } catch (Exception e) {
+            logException("Exception caught while handling group multicast message. Error is " + e.getLocalizedMessage(),
+                    e);
         } finally {
             sendLock.unlock();
+            statsCollector.addGroupMulticastSentDuration(duration, (destination.size() - (deliverToMySelf ? 1 : 0)));
         }
     }
 
-    private void handleUpMessage(Event evt) {
-        Message message = (Message) evt.getArg();
+    private void handleDataMessage(Message message, GroupMulticastHeader header) {
+        long startTime = statsCollector.now();
+        long duration = -1;
 
-        GroupMulticastHeader header = (GroupMulticastHeader) message.getHeader(this.id);
-
-        if (header == null) {
-            up_prot.up(evt);
-            return;
-        }
-
-        MessageID messageID = header.getMessageID();
         try {
-            switch (header.getType()) {
-                case GroupMulticastHeader.MESSAGE:
-                    //create the sequence number and put it in deliver manager
-                    long myProposeSequenceNumber = sequenceNumberManager.updateAndGet(header.getSequencerNumber());
-                    deliverManager.addNewMessageToDeliver(messageID, message, myProposeSequenceNumber);
+            MessageID messageID = header.getMessageID();
 
-                    if (log.isTraceEnabled()) {
-                        log.trace("Received the message with " + header + ". The proposed sequence number is " +
-                                myProposeSequenceNumber);
-                    }
+            //create the sequence number and put it in deliver manager
+            long myProposeSequenceNumber = sequenceNumberManager.updateAndGet(header.getSequencerNumber());
+            deliverManager.addNewMessageToDeliver(messageID, message, myProposeSequenceNumber);
 
-                    //create a new message and send it back
-                    Message proposeMessage = new Message();
-                    proposeMessage.setSrc(localAddress);
-                    proposeMessage.setDest(messageID.getAddress());
-
-                    GroupMulticastHeader newHeader = GroupMulticastHeader.createNewHeader(
-                            GroupMulticastHeader.SEQ_NO_PROPOSE, messageID);
-
-                    newHeader.setSequencerNumber(myProposeSequenceNumber);
-                    proposeMessage.putHeader(this.id, newHeader);
-                    proposeMessage.setFlag(Message.Flag.OOB);
-                    proposeMessage.setFlag(Message.Flag.DONT_BUNDLE);
-
-                    //multicastSenderThread.addUnicastMessage(proposeMessage);
-                    down_prot.down(new Event(Event.MSG, proposeMessage));
-                    break;
-                case GroupMulticastHeader.SEQ_NO_PROPOSE:
-                    if (log.isTraceEnabled()) {
-                        log.trace("Received the proposed sequence number message with " + header + " from " +
-                                message.getSrc());
-                    }
-
-                    sequenceNumberManager.update(header.getSequencerNumber());
-                    long finalSequenceNumber = senderManager.addPropose(messageID, message.getSrc(),
-                            header.getSequencerNumber());
-
-                    if (finalSequenceNumber != SenderManager.NOT_READY) {
-                        Message finalMessage = new Message();
-                        finalMessage.setSrc(localAddress);
-
-                        GroupMulticastHeader finalHeader = GroupMulticastHeader.createNewHeader(
-                                GroupMulticastHeader.SEQ_NO_FINAL, messageID);
-
-                        finalHeader.setSequencerNumber(finalSequenceNumber);
-                        finalMessage.putHeader(this.id, finalHeader);
-                        finalMessage.setFlag(Message.Flag.OOB);
-                        finalMessage.setFlag(Message.Flag.DONT_BUNDLE);
-
-                        Set<Address> destination = senderManager.getDestination(messageID);
-                        if (destination.contains(localAddress)) {
-                            destination.remove(localAddress);
-                        }
-
-                        if (log.isTraceEnabled()) {
-                            log.trace("Message " + messageID + " is ready to be deliver. Final sequencer number is " +
-                                    finalSequenceNumber);
-                        }
-                        
-                        multicastSenderThread.addMessage(finalMessage, destination);
-                        //returns true if we are in destination set
-                        if (senderManager.markSent(messageID)) {
-                            deliverManager.markReadyToDeliver(messageID, finalSequenceNumber);
-                        }
-                    }
-
-                    break;
-                case GroupMulticastHeader.SEQ_NO_FINAL:
-                    if (log.isTraceEnabled()) {
-                        log.trace("Received the final sequence number message with " + header);
-                    }
-
-                    sequenceNumberManager.update(header.getSequencerNumber());
-                    deliverManager.markReadyToDeliver(messageID, header.getSequencerNumber());
-                    break;
-                default:
-                    throw new IllegalStateException("Unknown header type received " + header);
+            if (log.isTraceEnabled()) {
+                log.trace("Received the message with " + header + ". The proposed sequence number is " +
+                        myProposeSequenceNumber);
             }
-        } catch (/*Interrupted*/Exception e) {
-            e.printStackTrace();  // TODO: Customise this generated block
+
+            //create a new message and send it back
+            Message proposeMessage = new Message();
+            proposeMessage.setSrc(localAddress);
+            proposeMessage.setDest(messageID.getAddress());
+
+            GroupMulticastHeader newHeader = GroupMulticastHeader.createNewHeader(
+                    GroupMulticastHeader.PROPOSE_MESSAGE, messageID);
+
+            newHeader.setSequencerNumber(myProposeSequenceNumber);
+            proposeMessage.putHeader(this.id, newHeader);
+            proposeMessage.setFlag(Message.Flag.OOB);
+            proposeMessage.setFlag(Message.Flag.DONT_BUNDLE);
+
+            //multicastSenderThread.addUnicastMessage(proposeMessage);
+            down_prot.down(new Event(Event.MSG, proposeMessage));
+            duration = statsCollector.now() - startTime;
+        } catch (Exception e) {
+            logException("Exception caught while processing the data message " + header.getMessageID(), e);
+        } finally {
+            statsCollector.addDataMessageDuration(duration);
         }
     }
 
-    @Override
-    public void deliver(Message message) {
-        message.setDest(localAddress);
+    private void handleSequenceNumberPropose(Address from, GroupMulticastHeader header) {
+        long startTime = statsCollector.now();
+        long duration = -1;
+        boolean lastProposeReceived = false;
 
-        if (log.isDebugEnabled()) {
-            log.debug("Deliver message " + message + " in total order");
+        boolean trace = log.isTraceEnabled();
+        try {
+            MessageID messageID = header.getMessageID();
+            if (trace) {
+                log.trace("Received the proposed sequence number message with " + header + " from " +
+                        from);
+            }
+
+            sequenceNumberManager.update(header.getSequencerNumber());
+            long finalSequenceNumber = senderManager.addPropose(messageID, from,
+                    header.getSequencerNumber());
+
+            if (finalSequenceNumber != SenderManager.NOT_READY) {
+                lastProposeReceived = true;
+                Message finalMessage = new Message();
+                finalMessage.setSrc(localAddress);
+
+                GroupMulticastHeader finalHeader = GroupMulticastHeader.createNewHeader(
+                        GroupMulticastHeader.FINAL_MESSAGE, messageID);
+
+                finalHeader.setSequencerNumber(finalSequenceNumber);
+                finalMessage.putHeader(this.id, finalHeader);
+                finalMessage.setFlag(Message.Flag.OOB);
+                finalMessage.setFlag(Message.Flag.DONT_BUNDLE);
+
+                Set<Address> destination = senderManager.getDestination(messageID);
+                if (destination.contains(localAddress)) {
+                    destination.remove(localAddress);
+                }
+
+                if (trace) {
+                    log.trace("Message " + messageID + " is ready to be deliver. Final sequencer number is " +
+                            finalSequenceNumber);
+                }
+
+                multicastSenderThread.addMessage(finalMessage, destination);
+                //returns true if we are in destination set
+                if (senderManager.markSent(messageID)) {
+                    deliverManager.markReadyToDeliver(messageID, finalSequenceNumber);
+                }
+            }
+
+            duration = statsCollector.now() - startTime;
+        } catch (Exception e) {
+            logException("Exception caught while processing the propose sequence number for " + header.getMessageID(), e);
+        } finally {
+            statsCollector.addProposeSequenceNumberDuration(duration, lastProposeReceived);
         }
+    }
 
-        up_prot.up(new Event(Event.MSG, message));
+    private void handleFinalSequenceNumber(GroupMulticastHeader header) {
+        long startTime = statsCollector.now();
+        long duration = -1;
+
+        try {
+            MessageID messageID = header.getMessageID();
+            if (log.isTraceEnabled()) {
+                log.trace("Received the final sequence number message with " + header);
+            }
+
+            sequenceNumberManager.update(header.getSequencerNumber());
+            deliverManager.markReadyToDeliver(messageID, header.getSequencerNumber());
+            duration = statsCollector.now() - startTime;
+        } catch (Exception e) {
+            logException("Exception caught while processing the final sequence number for " + header.getMessageID(), e);
+        } finally {
+            statsCollector.addFinalSequenceNumberDuration(duration);
+        }
+    }
+
+    private void logException(String msg, Exception e) {
+        if (log.isDebugEnabled()) {
+            log.debug(msg, e);
+        } else if (log.isWarnEnabled()) {
+            log.warn(msg + ". Error is " + e.getLocalizedMessage());
+        }
     }
 
     @ManagedOperation
     public String getMessageList() {
         return deliverManager.getMessageSet().toString();
+    }
+
+    @Override
+    public void enableStats(boolean flag) {
+        super.enableStats(flag);
+        statsCollector.setStatsEnabled(flag);
+    }
+
+    @Override
+    public void resetStats() {
+        super.resetStats();
+        statsCollector.clearStats();
+    }
+
+    @ManagedAttribute(description = "The average duration (in milliseconds) in processing and sending the group " +
+            "multicast message to all the recipients", writable = false)
+    public double getAvgGroupMulticastSentDuration() {
+        return statsCollector.getAvgGroupMulticastSentDuration();
+    }
+
+    @ManagedAttribute(description = "The average duration (in milliseconds) in processing a data message received",
+            writable = false)
+    public double getAvgDataMessageReceivedDuration() {
+        return statsCollector.getAvgDataMessageReceivedDuration();
+    }
+
+    @ManagedAttribute(description = "The average duration (in milliseconds) in processing a propose message received" +
+            "(not the last one", writable = false)
+    public double getAvgProposeMessageReceivedDuration() {
+        return statsCollector.getAvgProposeMesageReceivedDuration();
+    }
+
+    @ManagedAttribute(description = "The average duration (in milliseconds) in processing the last propose message " +
+            "received. This last propose message will originate the sending of the final message", writable = false)
+    public double getAvgLastProposeMessageReceivedDuration() {
+        return statsCollector.getAvgLastProposeMessageReceivedDuration();
+    }
+
+    @ManagedAttribute(description = "The average duration (in milliseconds) in processing a final message received",
+            writable = false)
+    public double getAvgFinalMessageReceivedDuration() {
+        return statsCollector.getAvgFinalMessageReceivedDuration();
+    }
+
+    @ManagedAttribute(description = "The number of group multicast messages sent. It is equals to the number of final" +
+            " messages sent", writable = false)
+    public int getNumberOfGroupMulticastMessagesSent() {
+        //equals to the number of final messages sent         
+        return statsCollector.getNumberOfGroupMulticastMessagesSent();
+    }
+
+    @ManagedAttribute(description = "The number of group multicast messages delivered. It is equals to the number of" +
+            " data messages delivered, the number of final messages delivered and the number of propose messages sent",
+            writable = false)
+    public int getNumberOfGroupMulticastMessagesDelivered() {
+        //equals to 
+        // -- the number of data messages delivered
+        // -- the number of final messages delivered
+        // -- the number of propose message sent
+        return statsCollector.getGroupMulticastDelivered();
+    }
+
+    @ManagedAttribute(description = "The number of propose messages received", writable = false)
+    public int getNumberOfProposeMessageReceived() {
+        return statsCollector.getNumberOfProposeMessagesReceived();
+    }
+
+    @ManagedAttribute(description = "The average number of unicasts messages created per group multicast message",
+            writable = false)
+    public double getAvgNumberOfUnicastSentPerGroupMulticast() {
+        return statsCollector.getAvgNumberOfUnicastSentPerGroupMulticast();
     }
 }

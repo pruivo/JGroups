@@ -18,9 +18,9 @@ import java.util.Set;
 public class GroupMulticastHeader extends Header {
 
     //type
-    public static final byte MESSAGE = 1;
-    public static final byte SEQ_NO_PROPOSE = 1 << 1;
-    public static final byte SEQ_NO_FINAL = 1 << 2;
+    public static final byte DATA_MESSAGE = 1;
+    public static final byte PROPOSE_MESSAGE = 1 << 1;
+    public static final byte FINAL_MESSAGE = 1 << 2;
 
     private byte type = 0;
     private MessageID messageID; //address and sequence number
@@ -95,9 +95,9 @@ public class GroupMulticastHeader extends Header {
 
     public static String type2String(byte type) {
         switch(type) {
-            case MESSAGE: return "MESSAGE";
-            case SEQ_NO_PROPOSE: return "SEQUENCE_NUMBER_PROPOSE";
-            case SEQ_NO_FINAL: return"SEQUENCE_NUMBER_FINAL";
+            case DATA_MESSAGE: return "DATA_MESSAGE";
+            case PROPOSE_MESSAGE: return "PROPOSE_MESSAGE";
+            case FINAL_MESSAGE: return"FINAL_MESSAGE";
             default: return "UNKNOWN";
         }
     }
