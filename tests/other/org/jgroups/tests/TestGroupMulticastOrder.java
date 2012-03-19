@@ -43,7 +43,7 @@ public class TestGroupMulticastOrder {
         if (argumentsParser.isHelp()) {
             helpAndExit();
         } else if(argumentsParser.isTestOrder()) {
-            String[] paths = argumentsParser.getFilesPath();
+            /*String[] paths = argumentsParser.getFilesPath();
             int numberOfFiles = paths.length;
 
             ProcessFile[] threads = new ProcessFile[numberOfFiles];
@@ -70,7 +70,7 @@ public class TestGroupMulticastOrder {
                 messageInfo.check();
             }
             System.out.println("============= FINISHED =============");
-            System.exit(0);
+            System.exit(0);*/
         }
 
         TestGroupMulticastOrder testGroupMulticastOrder = new TestGroupMulticastOrder(
@@ -97,8 +97,7 @@ public class TestGroupMulticastOrder {
         System.out.println("  -h                    \tshow this message");
         System.out.println("  -nr-nodes <value>     \tnumber of nodes");
         System.out.println("  -nr-messages <values> \tnumber of messages to send by each node");
-        System.out.println("  -test-order <files...>\tcheck the order of the messages in the files. " +
-                "The remaining arguments are ignore");
+        System.out.println("  -config <file>        \tthe JGroup's configuration file");
         System.exit(1);
     }
 
@@ -142,12 +141,6 @@ public class TestGroupMulticastOrder {
                             System.err.println("Number of messages must be greater than 0");
                             System.exit(1);
                         }
-                    } else if ("-test-order".equals(args[i])) {
-                        int numberOfFiles = args.length - (i + 1);
-                        filesPath = new String[numberOfFiles];
-                        System.arraycopy(args, i + 1, filesPath, 0, numberOfFiles);
-                        testOrder = true;
-                        i = args.length;
                     } else if ("-config".equals(args[i])) {
                         config = args[++i];
                     } else {
@@ -291,7 +284,7 @@ public class TestGroupMulticastOrder {
     }
 
     // ====================== messages info (deliver before and after) ================
-    private static class MessageInfo {
+    /*private static class MessageInfo {
         private String message;
         private Set<String> deliveredBefore = new HashSet<String>();
         private Set<String> deliveredAfter = new HashSet<String>();
@@ -310,9 +303,29 @@ public class TestGroupMulticastOrder {
             }
         }
     }
+    
+    private static class MessageInfo2 extends MessageInfo {
+        private String message;
+        private Set<MessageInfo2> deliveredBefore = new HashSet<MessageInfo2>();
+        
+        @Override
+        public void join(MessageInfo messageInfo) {
+            deliveredBefore.addAll(((MessageInfo2)messageInfo).deliveredBefore);
+        }
+        
+        @Override
+        public void check() {
+            for (MessageInfo2 messageInfo2 : deliveredBefore) {
+                if (messageInfo2.deliveredBefore.contains(this)) {
+                    System.err.println("ERROR: WRONG ORDER! This message " + message + " was delivered before and after the" +
+                        " message " + messageInfo2.message);
+                }
+            }
+        }
+    }*/
 
     //======================= thread processing each input file =====================
-    private static class ProcessFile extends Thread {
+    /*private static class ProcessFile extends Thread {
         private String filepath;
         public List<MessageInfo> list = new LinkedList<MessageInfo>();
 
@@ -323,6 +336,10 @@ public class TestGroupMulticastOrder {
 
         @Override
         public void run() {
+            runV2();
+        }
+        
+        public void runV1() {
             try {
                 Set<String> previously = new HashSet<String>();
                 BufferedReader bufferedReader = new BufferedReader(new FileReader(filepath));
@@ -345,7 +362,27 @@ public class TestGroupMulticastOrder {
                 e.printStackTrace();  // TODO: Customise this generated block
             }
         }
-    }
+        
+        public void runV2() {
+            try {
+                Set<MessageInfo2> previously = new HashSet<MessageInfo2>();
+                BufferedReader bufferedReader = new BufferedReader(new FileReader(filepath));
+                String message;
+
+                while ((message = bufferedReader.readLine()) != null) {
+                    MessageInfo2 messageInfo = new MessageInfo2();
+                    messageInfo.message = message;
+                    messageInfo.deliveredBefore.addAll(previously);                    
+                    list.add(messageInfo);
+                    previously.add(messageInfo);
+                }
+            } catch (FileNotFoundException e) {
+                e.printStackTrace();  // TODO: Customise this generated block
+            } catch (IOException e) {
+                e.printStackTrace();  // TODO: Customise this generated block
+            }
+        }
+    }*/
 
     //======================= data message =======================
     private static class DataMessage implements Serializable {
@@ -488,11 +525,11 @@ public class TestGroupMulticastOrder {
         receiver.printReceiverInfo();
         printJMXStats();
     }
-    
+
     private void printJMXStats() {
         MBeanServer mBeanServer = ManagementFactory.getPlatformMBeanServer();
         ObjectName groupMulticast = getGroupMulticastObjectName(mBeanServer);
-        
+
         if (groupMulticast == null) {
             System.err.println("Unable to find the GROUP_MULTICAST protocol");
             return ;
@@ -503,11 +540,11 @@ public class TestGroupMulticastOrder {
             for (MBeanAttributeInfo mBeanAttributeInfo : mBeanServer.getMBeanInfo(groupMulticast).getAttributes()) {
                 String attribute = mBeanAttributeInfo.getName();
                 String type = mBeanAttributeInfo.getType();
-                
+
                 if (!type.equals("double") && !type.equals("int")) {
                     continue;
                 }
-                                
+
                 System.out.println(attribute + "=" + mBeanServer.getAttribute(groupMulticast, attribute));
             }
             System.out.println("======== JMX STATS =========");

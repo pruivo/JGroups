@@ -416,22 +416,34 @@ public class GROUP_MULTICAST extends Protocol implements DeliverProtocol {
         return statsCollector.getAvgFinalMessageReceivedDuration();
     }
 
-    @ManagedAttribute(description = "The number of group multicast messages sent. It is equals to the number of final" +
-            " messages sent", writable = false)
+    @ManagedAttribute(description = "The number of group multicast messages sent", writable = false)
     public int getNumberOfGroupMulticastMessagesSent() {
-        //equals to the number of final messages sent         
         return statsCollector.getNumberOfGroupMulticastMessagesSent();
     }
 
-    @ManagedAttribute(description = "The number of group multicast messages delivered. It is equals to the number of" +
-            " data messages delivered, the number of final messages delivered and the number of propose messages sent",
-            writable = false)
+    @ManagedAttribute(description = "The number of final group messages sent", writable = false)
+    public int getNumberOfFinalGroupMessagesSent() {
+        return statsCollector.getNumberOfFinalGroupMessagesSent();
+    }
+
+    @ManagedAttribute(description = "The number of group multicast messages delivered", writable = false)
     public int getNumberOfGroupMulticastMessagesDelivered() {
-        //equals to 
-        // -- the number of data messages delivered
-        // -- the number of final messages delivered
-        // -- the number of propose message sent
         return statsCollector.getGroupMulticastDelivered();
+    }
+
+    @ManagedAttribute(description = "The number of propose messages sent", writable = false)
+    public int getNumberOfProposeMessageSent() {
+        return statsCollector.getNumberOfProposeMessagesSent();
+    }
+
+    @ManagedAttribute(description = "The number of final messages delivered", writable = false)
+    public int getNumberOfFinalMessagesDelivered() {
+        return statsCollector.getNumberOfFinalMessagesDelivered();
+    }
+
+    @ManagedAttribute(description = "The number of data messages delivered", writable = false)
+    public int getNumberOfDataMessagesDelivered() {
+        return statsCollector.getNumberOfProposeMessagesSent();
     }
 
     @ManagedAttribute(description = "The number of propose messages received", writable = false)

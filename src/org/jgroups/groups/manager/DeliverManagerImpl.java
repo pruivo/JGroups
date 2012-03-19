@@ -4,6 +4,8 @@ import org.jgroups.Message;
 import org.jgroups.groups.MessageID;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /**
  * // TODO: Document this
@@ -14,16 +16,22 @@ import java.util.*;
 public class DeliverManagerImpl implements DeliverManager {
     private static final MessageInfoComparator COMPARATOR = new MessageInfoComparator();
     private final SortedSet<MessageInfo> toDeliverSet = new TreeSet<MessageInfo>(COMPARATOR);
+    private final ConcurrentMap<MessageID, MessageInfo> messageCache = new ConcurrentHashMap<MessageID, MessageInfo>(8192, .75f, 64);
 
     public void addNewMessageToDeliver(MessageID messageID, Message message, long sequenceNumber) {
         MessageInfo messageInfo = new MessageInfo(messageID, message, sequenceNumber);
         synchronized (toDeliverSet) {
             toDeliverSet.add(messageInfo);
         }
+        messageCache.put(messageID, messageInfo);
+    }
+
+    public void markReadyToDeliver(MessageID messageID, long finalSequenceNumber) {
+        markReadyToDeliverV2(messageID, finalSequenceNumber);
     }
 
     @SuppressWarnings({"SuspiciousMethodCalls"})
-    public void markReadyToDeliver(MessageID messageID, long finalSequenceNumber) {
+    private void markReadyToDeliverV1(MessageID messageID, long finalSequenceNumber) {
         synchronized (toDeliverSet) {
             MessageInfo messageInfo = null;
             boolean needsUpdatePosition = false;
@@ -51,6 +59,31 @@ public class DeliverManagerImpl implements DeliverManager {
             }
 
             if (!toDeliverSet.isEmpty() && toDeliverSet.first().isReadyToDeliver()) {
+                toDeliverSet.notify();
+            }
+        }
+    }
+
+    private void markReadyToDeliverV2(MessageID messageID, long finalSequenceNumber) {
+        MessageInfo messageInfo = messageCache.remove(messageID);
+
+        if (messageInfo == null) {
+            throw new IllegalStateException("Message ID not found in to deliver list. this can't happen. " +
+                    "Message ID is " + messageID);
+        }
+
+        boolean needsUpdatePosition = messageInfo.isUpdatePositionNeeded(finalSequenceNumber);
+
+        synchronized (toDeliverSet) {
+            if (needsUpdatePosition) {
+                toDeliverSet.remove(messageInfo);
+                messageInfo.updateAndmarkReadyToDeliver(finalSequenceNumber);
+                toDeliverSet.add(messageInfo);
+            } else {
+                messageInfo.updateAndmarkReadyToDeliver(finalSequenceNumber);
+            }
+            
+            if (toDeliverSet.first().isReadyToDeliver()) {
                 toDeliverSet.notify();
             }
         }
@@ -156,6 +189,10 @@ public class DeliverManagerImpl implements DeliverManager {
                     ", sequenceNumber=" + sequenceNumber +
                     ", readyToDeliver=" + readyToDeliver +
                     '}';
+        }
+
+        public boolean isUpdatePositionNeeded(long finalSequenceNumber) {
+            return sequenceNumber != finalSequenceNumber;
         }
     }
 
