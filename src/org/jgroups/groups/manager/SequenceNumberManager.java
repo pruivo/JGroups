@@ -15,7 +15,7 @@ public class SequenceNumberManager {
     }
 
     public synchronized void update(long otherSequenceNumber) {
-        sequenceNumber = Math.max(sequenceNumber, otherSequenceNumber);
+        sequenceNumber = Math.max(sequenceNumber, otherSequenceNumber + 1);
     }
 
     public synchronized long updateAndGet(long otherSequenceNumber) {
