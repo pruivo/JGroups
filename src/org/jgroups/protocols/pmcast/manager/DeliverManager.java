@@ -5,10 +5,10 @@ import org.jgroups.Message;
 import java.util.List;
 
 /**
- * // TODO: Document this
+ * The interface that a deliver manager must implement. This method is invoked by the deliver thread
  *
- * @author pruivo
- * @since 4.0
+ * @author Pedro Ruivo
+ * @since 3.1
  */
 public interface DeliverManager {
 

@@ -8,16 +8,22 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 /**
- * // TODO: Document this
+ * The implementation of the Deliver Manager
  *
- * @author pruivo
- * @since 4.0
+ * @author Pedro Ruivo
+ * @since 3.1
  */
 public class DeliverManagerImpl implements DeliverManager {
     private static final MessageInfoComparator COMPARATOR = new MessageInfoComparator();
     private final SortedSet<MessageInfo> toDeliverSet = new TreeSet<MessageInfo>(COMPARATOR);
     private final ConcurrentMap<MessageID, MessageInfo> messageCache = new ConcurrentHashMap<MessageID, MessageInfo>(8192, .75f, 64);
 
+    /**
+     * Add a new group message to be deliver 
+     * @param messageID         the message ID
+     * @param message           the message (needed to be deliver later)
+     * @param sequenceNumber    the initial sequence number
+     */
     public void addNewMessageToDeliver(MessageID messageID, Message message, long sequenceNumber) {
         MessageInfo messageInfo = new MessageInfo(messageID, message, sequenceNumber);
         synchronized (toDeliverSet) {
@@ -26,12 +32,18 @@ public class DeliverManagerImpl implements DeliverManager {
         messageCache.put(messageID, messageInfo);
     }
 
+    /**
+     * marks the message as ready to deliver and set the final sequence number (to be ordered)
+     * @param messageID             the message ID
+     * @param finalSequenceNumber   the final sequence number
+     */
     public void markReadyToDeliver(MessageID messageID, long finalSequenceNumber) {
         markReadyToDeliverV2(messageID, finalSequenceNumber);
     }
 
-    @SuppressWarnings({"SuspiciousMethodCalls"})
+    @SuppressWarnings({"SuspiciousMethodCalls", "EqualsBetweenInconvertibleTypes"})
     private void markReadyToDeliverV1(MessageID messageID, long finalSequenceNumber) {
+        //This is an old version. It was the bottleneck. Updated to version 2. It can be removed later
         synchronized (toDeliverSet) {
             MessageInfo messageInfo = null;
             boolean needsUpdatePosition = false;
@@ -82,13 +94,15 @@ public class DeliverManagerImpl implements DeliverManager {
             } else {
                 messageInfo.updateAndmarkReadyToDeliver(finalSequenceNumber);
             }
-            
+
             if (toDeliverSet.first().isReadyToDeliver()) {
                 toDeliverSet.notify();
             }
         }
     }
 
+    //see the interface javadoc
+    @Override
     public List<Message> getNextMessagesToDeliver() throws InterruptedException {
         LinkedList<Message> toDeliver = new LinkedList<Message>();
         synchronized (toDeliverSet) {
@@ -115,12 +129,19 @@ public class DeliverManagerImpl implements DeliverManager {
         return toDeliver;
     }
 
+    /**
+     * remove all the pending messages
+     */
     public void clear() {
         synchronized (toDeliverSet) {
             toDeliverSet.clear();
+            messageCache.clear();
         }
     }
 
+    /**
+     * Keeps the state of a message
+     */
     private static class MessageInfo {
 
         private MessageID messageID;
@@ -220,6 +241,10 @@ public class DeliverManagerImpl implements DeliverManager {
         }
     }
 
+    /**
+     * It is used for testing (see the messages in JMX)
+     * @return unmodifiable set of messages
+     */
     public Set<MessageInfo> getMessageSet() {
         synchronized (toDeliverSet) {
             return Collections.unmodifiableSet(toDeliverSet);

@@ -10,10 +10,13 @@ import java.lang.management.ManagementFactory;
 import java.util.*;
 
 /**
- * // TODO: Document this
+ * Runs the Total Order Multicast protocol and saves the messages delivered
+ * 
+ * Note: this is used for debugging
+ * Note2: this needs to be clean :)
  *
- * @author pruivo
- * @since 4.0
+ * @author Pedro Ruivo
+ * @since 3.1
  */
 public class TestGroupMulticastOrder {
     private static final String PROPS = "group-multicast.xml";

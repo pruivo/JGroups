@@ -12,10 +12,10 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 
 /**
- * // TODO: Document this
+ * This thread is the responsible to send the group messages, i.e, create N messages and send N unicasts messages
  *
- * @author pruivo
- * @since 4.0
+ * @author Pedro Ruivo
+ * @since 3.1
  */
 public class SenderThread extends Thread {
 
@@ -47,6 +47,7 @@ public class SenderThread extends Thread {
         sendingQueue.clear();
     }
 
+    @Deprecated
     public void addUnicastMessage(Message message) throws InterruptedException {
         sendingQueue.put(new MessageToSend(message, null));
     }

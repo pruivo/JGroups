@@ -7,10 +7,12 @@ import org.jgroups.util.Util;
 import java.io.*;
 
 /**
- * @author pedro
- * Date: 06-01-2011
- *
- * equals to ViewId
+ * The represents an unique identifier for the messages processed by the Total Order Multicast protocol
+ * 
+ * Note: it is similar to the ViewId (address + counter)
+ * 
+ * @author Pedro Ruivo
+ * @since 3.1
  */
 public class MessageID implements Externalizable, Comparable<MessageID>, Cloneable, Streamable {
     private Address address = null;

@@ -9,10 +9,10 @@ import org.jgroups.protocols.pmcast.manager.DeliverManager;
 import java.util.List;
 
 /**
- * // TODO: Document this
+ * The deliver threads. Is the only thread that delivers the Total Order Multicast message in order
  *
- * @author pruivo
- * @since 4.0
+ * @author Pedro Ruivo
+ * @since 3.1
  */
 public class DeliverThread extends Thread {
     private DeliverManager deliverManager;

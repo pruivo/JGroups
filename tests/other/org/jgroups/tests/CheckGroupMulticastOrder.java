@@ -8,10 +8,13 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * // TODO: Document this
+ * This check the order of the messages, assuming that the message IDs are printed in a file
  *
- * @author pruivo
- * @since 4.0
+ * Note: this is used for debugging
+ * Note2: this needs to be clean :)
+ *
+ * @author Pedro Ruivo
+ * @since 3.1
  */
 public class CheckGroupMulticastOrder {
 
@@ -44,11 +47,11 @@ public class CheckGroupMulticastOrder {
         System.out.println("--------------------------------------------------------------------");
 
         System.out.println("analyze " + printArgs(args) + " using " + numberOfThreads + " threads");
-        
+
         ComparingFiles[] threads = new ComparingFiles[numberOfThreads];
-        
+
         List<Pair> allCombinations = new LinkedList<Pair>();
-        
+
         for (int x = startIdx; x < args.length; ++x) {
             for (int y = x + 1; y < args.length; ++y) {
                 if (x == y) {
@@ -57,9 +60,9 @@ public class CheckGroupMulticastOrder {
                 allCombinations.add(new Pair(x, y));
             }
         }
-        
+
         System.out.println("Collection for the threads is " + allCombinations);
-        
+
         final Iterator<Pair> iterator = allCombinations.iterator();
         for (int i = 0; i < threads.length; ++i) {
             threads[i] = new ComparingFiles(iterator,args,"Comparator-" + i);
@@ -228,8 +231,8 @@ public class CheckGroupMulticastOrder {
             System.out.println(getName() + " finished!");
         }
     }*/
-    
-    private static class Pair {       
+
+    private static class Pair {
         private final int x, y;
 
         private Pair(int x, int y) {
@@ -253,7 +256,7 @@ public class CheckGroupMulticastOrder {
                     '}';
         }
     }
-    
+
     private static class ComparingFiles extends Thread {
         private final Iterator<Pair> filesToCompare;
         private ArrayList<String> messageDeliverOrder = new ArrayList<String>();
@@ -279,8 +282,8 @@ public class CheckGroupMulticastOrder {
                 int size = messageDeliverOrder.size();
                 messageDeliverOrder.clear();
                 messageDeliverOrder.ensureCapacity(size);
-            }            
-            
+            }
+
             System.out.println(getName() + " finished!");
         }
     }

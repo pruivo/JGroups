@@ -1,5 +1,10 @@
 #!/bin/bash
 
+#Author: Pedro Ruivo
+#Since: 3.1
+#Note: I'm assuming that jgroups-<version>.jar is in the same directory as this script. The same applies for
+#      for the log4j.properties
+
 WORKING_DIR=`cd $(dirname $0); pwd`
 HOSTNAME=`hostname`
 CP="${WORKING_DIR}/jgroups*.jar"

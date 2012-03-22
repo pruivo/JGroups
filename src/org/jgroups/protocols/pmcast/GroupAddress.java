@@ -8,7 +8,10 @@ import java.io.*;
 import java.util.*;
 
 /**
- * @author Pedro
+ * This type of address represents a group in which the total order properties must be applied
+ * 
+ * @author Pedro Ruivo
+ * @since 3.1
  */
 public class GroupAddress implements Address {
     private Set<Address> destinations;
@@ -39,7 +42,7 @@ public class GroupAddress implements Address {
 
     @Override
     public String toString() {
-        return "GroupAddress=(" + destinations + ")";
+        return "GroupAddress{" + destinations + "}";
     }
 
     @Override

@@ -8,10 +8,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 /**
- * // TODO: Document this
+ * Keeps track of all sent messages, until the final sequence number is known
  *
- * @author pruivo
- * @since 4.0
+ * @author Pedro Ruivo
+ * @since 3.1
  */
 public class SenderManager {
 
@@ -19,6 +19,13 @@ public class SenderManager {
 
     private final ConcurrentMap<MessageID, MessageInfo> sentMessages = new ConcurrentHashMap<MessageID, MessageInfo>();
 
+    /**
+     * Add a new message sent
+     * @param messageID             the message ID
+     * @param destination           the destination set
+     * @param initialSequenceNumber the initial sequence number
+     * @param deliverToMySelf       true if *this* member is in destination sent, false otherwise
+     */
     public void addNewMessageToSent(MessageID messageID, Set<Address> destination, long initialSequenceNumber,
                                     boolean deliverToMySelf) {
         MessageInfo messageInfo = new MessageInfo(destination, initialSequenceNumber, deliverToMySelf);
@@ -28,6 +35,13 @@ public class SenderManager {
         sentMessages.put(messageID, messageInfo);
     }
 
+    /**
+     * Add a propose from a member in destination set
+     * @param messageID         the message ID
+     * @param from              the originator of the propose
+     * @param sequenceNumber    the proposed sequence number
+     * @return NOT_READY if the final sequence number is not know, or the final sequence number
+     */
     public long addPropose(MessageID messageID, Address from, long sequenceNumber) {
         MessageInfo messageInfo = sentMessages.get(messageID);
         if (messageInfo != null && messageInfo.addPropose(from, sequenceNumber)) {
@@ -36,11 +50,21 @@ public class SenderManager {
         return NOT_READY;
     }
 
+    /**
+     * Mark the message as sent
+     * @param messageID the message ID
+     * @return  return true if *this* member is in destination set
+     */
     public boolean markSent(MessageID messageID) {
         MessageInfo messageInfo =  sentMessages.remove(messageID);
         return messageInfo != null && messageInfo.toSelfDeliver;
     }
 
+    /**
+     * obtains the destination set of a message
+     * @param messageID the message ID
+     * @return the destination set
+     */
     public Set<Address> getDestination(MessageID messageID) {
         MessageInfo messageInfo = sentMessages.get(messageID);
         Set<Address> destination;
@@ -52,10 +76,16 @@ public class SenderManager {
         return destination;
     }
 
+    /**
+     * removes all pending messages
+     */
     public void clear() {
         sentMessages.clear();
     }
 
+    /**
+     * The state of a message (destination, proposes missing, the highest sequence number proposed, etc...)
+     */
     private static class MessageInfo {
         private ArrayList<Address> destination;
         private long highestSequenceNumberReceived;

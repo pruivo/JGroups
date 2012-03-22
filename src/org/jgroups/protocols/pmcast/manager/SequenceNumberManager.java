@@ -1,23 +1,37 @@
 package org.jgroups.protocols.pmcast.manager;
 
 /**
- * // TODO: Document this
+ * Manages the messages sequence number (keeps it up-to-date)
  *
- * @author pruivo
- * @since 4.0
+ * @author Pedro Ruivo
+ * @since 3.1
  */
 public class SequenceNumberManager {
 
     private long sequenceNumber = 0;
 
+    /**
+     * 
+     * @return the next sequence number
+     */
     public synchronized long getAndIncrement() {
         return sequenceNumber++;
     }
 
+    /**
+     * updates the sequence number to the maximum between them
+     * @param otherSequenceNumber   the sequence number received
+     */
     public synchronized void update(long otherSequenceNumber) {
         sequenceNumber = Math.max(sequenceNumber, otherSequenceNumber + 1);
     }
 
+    /**
+     * updates the sequence number and returns the next, that will be used a propose sequence number 
+     * @param otherSequenceNumber   the sequence number received
+     * @return                      the next sequence number or the received sequence number, if the received sequence
+     *                              number is higher the the actual sequence number
+     */
     public synchronized long updateAndGet(long otherSequenceNumber) {
         if (sequenceNumber >= otherSequenceNumber) {
             return sequenceNumber++;

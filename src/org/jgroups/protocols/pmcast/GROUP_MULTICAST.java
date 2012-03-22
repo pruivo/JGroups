@@ -21,12 +21,10 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * // TODO: Document this
+ * Total Order Multicast with three communication steps (based on Skeen's Algorithm)
  *
- * Total Order Multicast with three communication steps
- *
- * @author pruivo
- * @since 4.0
+ * @author Pedro Ruivo
+ * @since 3.1
  */
 @MBean(description = "Implementation of Total Order Multicast based on Skeen's Algorithm")
 public class GROUP_MULTICAST extends Protocol implements DeliverProtocol {
@@ -148,7 +146,7 @@ public class GROUP_MULTICAST extends Protocol implements DeliverProtocol {
         if (log.isTraceEnabled()) {
             log.trace("Handle view " + view);
         }
-        // TODO: Customise this generated block
+        // TODO: Future work: How to add fault tolerance? (simple and efficient)
     }
 
     private void handleDownMessage(Event evt) {

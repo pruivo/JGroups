@@ -13,7 +13,10 @@ import java.util.HashSet;
 import java.util.Set;
 
 /**
- * @author Pedro
+ * The header for the Total Order Multicast protocol
+ * 
+ * @author Pedro Ruivo
+ * @since 3.1
  */
 public class GroupMulticastHeader extends Header {
 
