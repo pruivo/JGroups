@@ -113,70 +113,74 @@
                 <directory>${project.build.directory}/schema</directory>
             </resource>
             <resource>
-               <directory>${project.basedir}</directory>
-               <includes>
-                  <include>INSTALL.html</include>
-                  <include>LICENSE</include>
-                  <include>README</include>
-               </includes>
+                <directory>${project.basedir}</directory>
+                <includes>
+                    <include>INSTALL.html</include>
+                    <include>LICENSE</include>
+                    <include>README</include>
+                </includes>
             </resource>
             <resource>
-              <directory>${project.basedir}/lib</directory>
-              <includes>
-                 <include>licenses/thirdparty*</include>
-              </includes>
+                <directory>${project.basedir}/lib</directory>
+                <includes>
+                    <include>licenses/thirdparty*</include>
+                </includes>
             </resource>
         </resources>
         <plugins>
             <plugin>
                 <artifactId>maven-compiler-plugin</artifactId>
+                <version>2.3.2</version>
                 <configuration>
                     <source>1.6</source>
                     <target>1.6</target>
                     <excludes>
                         <exclude>org/jgroups/util/JUnitXMLReporter.java</exclude>
                         <!--<exclude>org/jgroups/demos/**</exclude>-->
+                        <!-- Pedro: removed tests classes -->
+                        <exclude>org/jgroups/util/DumpData.java</exclude>
+                        <exclude>org/jgroups/util/CountTests.java</exclude>
                     </excludes>
                 </configuration>
             </plugin>
-           <plugin>
-              <groupId>org.codehaus.mojo</groupId>
-              <artifactId>build-helper-maven-plugin</artifactId>
-              <version>1.7</version>
-              <executions>
-                 <execution>
-                    <id>add-source</id>
-                    <phase>validate</phase>
-                    <goals>
-                       <goal>add-source</goal>
-                    </goals>
-                    <configuration>
-                       <sources>
-                          <!-- These tests have to go in the main jar -->
-                          <source>tests/other</source>
-                          <source>tests/perf</source>
-                       </sources>
-                    </configuration>
-                 </execution>
-                 <execution>
-                    <id>add-test-source</id>
-                    <phase>validate</phase>
-                    <goals>
-                       <goal>add-test-source</goal>
-                    </goals>
-                    <configuration>
-                       <sources>
-                          <source>tests/byteman</source>
-                          <source>tests/junit</source>
-                          <source>tests/junit-functional</source>
-                          <!-- tests/other and tests/perf are included in the normal sources -->
-                          <source>tests/stress</source>
-                       </sources>
-                    </configuration>
-                 </execution>
-              </executions>
-           </plugin>
-           <plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>build-helper-maven-plugin</artifactId>
+                <version>1.7</version>
+                <executions>
+                    <execution>
+                        <id>add-source</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>add-source</goal>
+                        </goals>
+                        <configuration>
+                            <sources>
+                                <!-- These tests have to go in the main jar -->
+                                <source>tests/other</source>
+                                <source>tests/perf</source>
+                            </sources>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <id>add-test-source</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>add-test-source</goal>
+                        </goals>
+                        <configuration>
+                            <sources>
+                                <source>tests/byteman</source>
+                                <source>tests/junit</source>
+                                <source>tests/junit-functional</source>
+                                <!-- tests/other and tests/perf are included in the normal sources -->
+                                <source>tests/stress</source>
+                            </sources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
                 <artifactId>maven-antrun-plugin</artifactId>
                 <executions>
                     <execution>
@@ -217,22 +221,23 @@
             </plugin>
             <!-- Make sure we generate src jars too -->
             <plugin>
-               <groupId>org.apache.maven.plugins</groupId>
-               <artifactId>maven-source-plugin</artifactId>
-               <version>2.1.1</version>
-               <inherited>true</inherited>
-               <executions>
-                  <execution>
-                     <id>attach-sources</id>
-                     <goals>
-                        <goal>jar</goal>
-                     </goals>
-                  </execution>
-               </executions>
-            </plugin>            
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>2.1.1</version>
+                <inherited>true</inherited>
+                <executions>
+                    <execution>
+                        <id>attach-sources</id>
+                        <goals>
+                            <goal>jar</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
+                <version>2.4</version>
                 <configuration>
                     <archive>
                         <manifestFile>conf/manifest.mf</manifestFile>
@@ -242,6 +247,7 @@
             <plugin>
                 <groupId>org.apache.felix</groupId>
                 <artifactId>maven-bundle-plugin</artifactId>
+                <version>2.3.7</version>
                 <extensions>true</extensions>
                 <configuration>
                     <instructions>
