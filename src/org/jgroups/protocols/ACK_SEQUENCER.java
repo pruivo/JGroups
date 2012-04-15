@@ -35,8 +35,8 @@ public class ACK_SEQUENCER extends Protocol {
    private volatile int expectedNumberOfFailedMembers = 2;
 
    @Property(description = "The percentage of expected failed member. This will update dynamic the f value. -1 disables " +
-         "it and only accepts values between 0 (no waiting for acks) and 100 (wait all acks)", writable = true)
-   private volatile int percentageOfFailedMembers = -1; //0 a 100. -1 == disable
+         "it and only accepts values between 0.0 (no waiting for acks) and 1.0 (wait all acks)", writable = true)
+   private volatile double percentageOfFailedMembers = -1; //0.1 to 1.0. -1 == disable
 
    private volatile int actualNumberOfMembers = 0;
    private short sequencerHeaderID = -1;
@@ -55,8 +55,8 @@ public class ACK_SEQUENCER extends Protocol {
    }
 
    @ManagedOperation
-   public void setPercentageOfFailedMembers(int percentageOfFailedMembers) {
-      if (percentageOfFailedMembers > 100 || percentageOfFailedMembers < -1) {
+   public void setPercentageOfFailedMembers(double percentageOfFailedMembers) {
+      if (percentageOfFailedMembers > 1.0 || percentageOfFailedMembers < -1.0) {
          throw new IllegalArgumentException("Percentage of failed members only accepts values between -1 and 100" +
                                                   " inclusive. value received is " + percentageOfFailedMembers);
       }
@@ -81,12 +81,11 @@ public class ACK_SEQUENCER extends Protocol {
 
    @Override
    public Object up(Event evt) {
-      if (sequencerHeaderID == -1) {
-         return up_prot.up(evt);
-      }
-
       switch(evt.getType()) {
          case Event.MSG:
+            if (sequencerHeaderID == -1) {
+               break;
+            }
             Message message = (Message) evt.getArg();
             AckSequencerHeader ack = (AckSequencerHeader) message.getHeader(id);
 
@@ -114,10 +113,6 @@ public class ACK_SEQUENCER extends Protocol {
 
    @Override
    public Object down(Event evt) {
-      if (sequencerHeaderID == -1) {
-         return down_prot.down(evt);
-      }
-
       switch(evt.getType()) {
          case Event.VIEW_CHANGE:
             handleViewChange((View)evt.getArg());
@@ -139,7 +134,8 @@ public class ACK_SEQUENCER extends Protocol {
 
          MessageWindow messageWindow = getMessageWindows(originalSender);
          try {
-            messageWindow.waitUntilDeliverIsPossible(seqNo, expectedNumberOfFailedMembers, actualView.getMembers());
+            messageWindow.waitUntilDeliverIsPossible(seqNo, expectedNumberOfFailedMembers, actualView.getMembers(),
+                                                     localAddress);
          } catch (InterruptedException e) {
             log.warn("Interrupted Exception received while waiting for the ACKs. Delivering message...");
          }
@@ -210,17 +206,17 @@ public class ACK_SEQUENCER extends Protocol {
    }
 
    private void updateExpectedNumberOfFailedMembers() {
-      if (percentageOfFailedMembers == -1) {
+      if (percentageOfFailedMembers < 0) {
          return;
       }
-      expectedNumberOfFailedMembers = actualNumberOfMembers * 100 / percentageOfFailedMembers;
+      expectedNumberOfFailedMembers = (int)(actualNumberOfMembers * percentageOfFailedMembers) + 1;
    }
 
-   private static class AckSequencerHeader extends Header {
+   public static class AckSequencerHeader extends Header {
       private Address originalSender;
       private long seqNo;
 
-      private AckSequencerHeader(Address originalSender, long seqNo) {
+      public AckSequencerHeader(Address originalSender, long seqNo) {
          this.originalSender = originalSender;
          this.seqNo = seqNo;
       }
@@ -255,8 +251,9 @@ public class ACK_SEQUENCER extends Protocol {
       private Set<Address> membersMissing = null;
       private int numberOfAcksMissing = -1;
 
-      public synchronized void await(int acksExpected, Collection<Address> members) throws InterruptedException {
+      public synchronized void await(int acksExpected, Collection<Address> members, Address localAddress) throws InterruptedException {
          populateIfNeeded(acksExpected, members);
+         membersMissing.remove(localAddress);
          if (numberOfAcksMissing > 0 && !membersMissing.isEmpty()) {
             this.wait();
          }
@@ -304,11 +301,12 @@ public class ACK_SEQUENCER extends Protocol {
       private volatile long highestDeliverMessageSeqNo = 0;
       private ConcurrentSkipListMap<Long, AckCollector> ackWindow = new ConcurrentSkipListMap<Long, AckCollector>();
 
-      public void waitUntilDeliverIsPossible(long seqNo, int numberOfAcksMissing, Collection<Address> members)
+      public void waitUntilDeliverIsPossible(long seqNo, int numberOfAcksMissing, Collection<Address> members,
+                                             Address localAddress)
             throws InterruptedException {
          highestDeliverMessageSeqNo = seqNo;
          AckCollector ackCollector = getOrCreate(seqNo);
-         ackCollector.await(numberOfAcksMissing, members);
+         ackCollector.await(numberOfAcksMissing, members, localAddress);
          removeOldAckCollectors();
       }
 
@@ -374,8 +372,8 @@ public class ACK_SEQUENCER extends Protocol {
    }
 
    @ManagedAttribute
-   public int getPercentageOfFailedMembers() {
-      return percentageOfFailedMembers;
+   public double getPercentageOfFailedMembers() {
+      return percentageOfFailedMembers * 100;
    }
 
    @ManagedAttribute
@@ -393,4 +391,8 @@ public class ACK_SEQUENCER extends Protocol {
       return coordinatorAddress;
    }
 
+   //TEST_ONLY
+   public short getSequencerHeaderID() {
+      return sequencerHeaderID;
+   }
 }

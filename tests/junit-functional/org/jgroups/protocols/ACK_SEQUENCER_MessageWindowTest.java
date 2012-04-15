@@ -1,15 +1,10 @@
-package jgroups.protocols;
+package org.jgroups.protocols;
 
 import org.jgroups.Address;
 import org.jgroups.Global;
-import org.jgroups.protocols.ACK_SEQUENCER;
+import org.jgroups.util.Util;
 import org.testng.annotations.Test;
 
-import java.io.DataInput;
-import java.io.DataOutput;
-import java.io.IOException;
-import java.io.ObjectInput;
-import java.io.ObjectOutput;
 import java.util.Collections;
 import java.util.Set;
 
@@ -117,69 +112,13 @@ public class ACK_SEQUENCER_MessageWindowTest {
 
    private void deliver(ACK_SEQUENCER.MessageWindow messageWindow, long seqNo) {
       try {
-         messageWindow.waitUntilDeliverIsPossible(seqNo, 0, Collections.<Address>emptyList());
+         messageWindow.waitUntilDeliverIsPossible(seqNo, 0, Collections.<Address>emptyList(), Util.createRandomAddress());
       } catch (InterruptedException e) {
          assert false : "Interrupted Exception not expected!";
       }
    }
 
    private void addAck(ACK_SEQUENCER.MessageWindow messageWindow, long seqNo) {
-      messageWindow.addAck(new TestAddress(0), seqNo, 0, Collections.<Address>emptyList());
-   }
-
-   private class TestAddress implements Address {
-      int id;
-
-      public TestAddress(int id) {
-         this.id = id;
-      }
-
-      @SuppressWarnings("UnusedDeclaration")
-      public TestAddress() {}
-
-      @Override
-      public int size() {
-         return id;
-      }
-
-      @Override
-      public boolean equals(Object o) {
-         if (this == o) return true;
-         if (o == null || getClass() != o.getClass()) return false;
-
-         TestAddress that = (TestAddress) o;
-
-         return id == that.id;
-
-      }
-
-      @Override
-      public int hashCode() {
-         return id;
-      }
-
-      @Override
-      public int compareTo(Address o) {
-         return Integer.signum(id - o.size());
-      }
-
-      @Override
-      public void writeExternal(ObjectOutput out) throws IOException {/*no-op*/}
-
-      @Override
-      public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {/*no-op*/}
-
-      @Override
-      public void writeTo(DataOutput out) throws Exception {/*no-op*/}
-
-      @Override
-      public void readFrom(DataInput in) throws Exception {/*no-op*/}
-
-      @Override
-      public String toString() {
-         return "TestAddress{" +
-               "id=" + id +
-               '}';
-      }
+      messageWindow.addAck(Util.createRandomAddress("A"), seqNo, 0, Collections.<Address>emptyList());
    }
 }

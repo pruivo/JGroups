@@ -1,15 +1,10 @@
-package jgroups.protocols;
+package org.jgroups.protocols;
 
 import org.jgroups.Address;
 import org.jgroups.Global;
-import org.jgroups.protocols.ACK_SEQUENCER;
+import org.jgroups.util.Util;
 import org.testng.annotations.Test;
 
-import java.io.DataInput;
-import java.io.DataOutput;
-import java.io.IOException;
-import java.io.ObjectInput;
-import java.io.ObjectOutput;
 import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
@@ -33,7 +28,7 @@ public class ACK_SEQUENCER_AckCollectorTest {
 
       ACK_SEQUENCER.AckCollector ackCollector = new ACK_SEQUENCER.AckCollector();
       try {
-         ackCollector.await(10, Collections.<Address>emptyList());
+         ackCollector.await(10, Collections.<Address>emptyList(), Util.createRandomAddress());
       } catch (InterruptedException e) {
          assert false : "blocked when try to await(10, emptyList)";
       }
@@ -48,7 +43,7 @@ public class ACK_SEQUENCER_AckCollectorTest {
 
       ACK_SEQUENCER.AckCollector ackCollector = new ACK_SEQUENCER.AckCollector();
       try {
-         ackCollector.await(0, addressList);
+         ackCollector.await(0, addressList, Util.createRandomAddress());
       } catch (InterruptedException e) {
          assert false : "blocked when try to await(0, nonEmptyList)";
       }
@@ -63,7 +58,7 @@ public class ACK_SEQUENCER_AckCollectorTest {
 
       ACK_SEQUENCER.AckCollector ackCollector = new ACK_SEQUENCER.AckCollector();
       try {
-         ackCollector.await(-1, addressList);
+         ackCollector.await(-1, addressList, Util.createRandomAddress());
       } catch (InterruptedException e) {
          assert false : "blocked when try to await(-1, nonEmptyList)";
       }
@@ -145,7 +140,7 @@ public class ACK_SEQUENCER_AckCollectorTest {
 
       check(ackCollector, addressList.size(), addressList.size());
 
-      ackCollector.ack(new TestAddress(-1), 0, Collections.<Address>emptyList());
+      ackCollector.ack(Util.createRandomAddress("B"), 0, Collections.<Address>emptyList());
 
       check(ackCollector, addressList.size(), addressList.size());
    }
@@ -163,6 +158,21 @@ public class ACK_SEQUENCER_AckCollectorTest {
       ackCollector.ack(addressList.get(0), 0, Collections.<Address>emptyList());
 
       check(ackCollector, addressList.size() - 1, addressList.size() - 1);
+   }
+   
+   public void testOneMemberAlive() {
+      Address coordinator = Util.createRandomAddress("A");
+      List<Address> addressList = Collections.<Address>singletonList(coordinator);
+
+      ACK_SEQUENCER.AckCollector ackCollector = new ACK_SEQUENCER.AckCollector();
+      ackCollector.populateIfNeeded(addressList.size(), addressList);
+
+      CountDownLatch countDownLatch = new CountDownLatch(1);
+
+      Thread thread = createNewAwaitThread(ackCollector, countDownLatch, coordinator);
+      thread.start();
+      
+      checkUnblocked(countDownLatch, ackCollector);
    }
 
    private void check(ACK_SEQUENCER.AckCollector ackCollector, int expectedAcks, int expectedSize) {
@@ -197,7 +207,7 @@ public class ACK_SEQUENCER_AckCollectorTest {
    private List<Address> addressList() {
       List<Address> addressList = new LinkedList<Address>();
       for (int i = 0; i < 10; i++) {
-         addressList.add(new TestAddress(i));
+         addressList.add(Util.createRandomAddress("A" + i));
       }
       return addressList;
    }
@@ -207,66 +217,23 @@ public class ACK_SEQUENCER_AckCollectorTest {
          @Override
          public void run() {
             try {
-               ackCollector.await(0, Collections.<Address>emptyList());
+               ackCollector.await(0, Collections.<Address>emptyList(), Util.createRandomAddress());
                countDownLatch.countDown();
             } catch (InterruptedException e) {/*just ignore*/}
          }
       };
    }
 
-   private class TestAddress implements Address {
-      int id;
-
-      public TestAddress(int id) {
-         this.id = id;
-      }
-
-      @SuppressWarnings("UnusedDeclaration")
-      public TestAddress() {}
-
-      @Override
-      public int size() {
-         return id;
-      }
-
-      @Override
-      public boolean equals(Object o) {
-         if (this == o) return true;
-         if (o == null || getClass() != o.getClass()) return false;
-
-         TestAddress that = (TestAddress) o;
-
-         return id == that.id;
-
-      }
-
-      @Override
-      public int hashCode() {
-         return id;
-      }
-
-      @Override
-      public int compareTo(Address o) {
-         return Integer.signum(id - o.size());
-      }
-
-      @Override
-      public void writeExternal(ObjectOutput out) throws IOException {/*no-op*/}
-
-      @Override
-      public void readExternal(ObjectInput in) throws IOException, ClassNotFoundException {/*no-op*/}
-
-      @Override
-      public void writeTo(DataOutput out) throws Exception {/*no-op*/}
-
-      @Override
-      public void readFrom(DataInput in) throws Exception {/*no-op*/}
-
-      @Override
-      public String toString() {
-         return "TestAddress{" +
-               "id=" + id +
-               '}';
-      }
+   private Thread createNewAwaitThread(final ACK_SEQUENCER.AckCollector ackCollector, final CountDownLatch countDownLatch,
+                                       final Address coordinatorAddress) {
+      return new Thread() {
+         @Override
+         public void run() {
+            try {
+               ackCollector.await(0, Collections.<Address>emptyList(), coordinatorAddress);
+               countDownLatch.countDown();
+            } catch (InterruptedException e) {/*just ignore*/}
+         }
+      };
    }
 }
