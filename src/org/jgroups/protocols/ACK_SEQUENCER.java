@@ -96,7 +96,7 @@ public class ACK_SEQUENCER extends Protocol {
             SEQUENCER.SequencerHeader sequencerHeader = (SEQUENCER.SequencerHeader) message.getHeader(sequencerHeaderID);
 
             if (sequencerHeader != null) {
-               return handleMessage(sequencerHeader.getOriginalSender(), sequencerHeader.getSeqno(), message);
+               return handleMessage(message.getSrc(), sequencerHeader.getSeqno(), message);
             }
 
             break;
