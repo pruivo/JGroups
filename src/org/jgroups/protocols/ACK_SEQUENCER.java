@@ -25,7 +25,7 @@ import java.util.concurrent.ConcurrentSkipListMap;
  * Message.
  *
  * @author Pedro Ruivo
- * @since 3.1
+ * @since 3.2
  */
 public class ACK_SEQUENCER extends Protocol {
 
@@ -47,7 +47,7 @@ public class ACK_SEQUENCER extends Protocol {
 
    private boolean trace = log.isTraceEnabled();
 
-   private final Map<Address, MessageWindow> origMbrAckMap = new HashMap<Address, MessageWindow>();
+   protected final Map<Address, MessageWindow> origMbrAckMap = new HashMap<Address, MessageWindow>();
 
    @ManagedOperation
    public void setExpectedNumberOfFailedMembers(int expectedNumberOfFailedMembers) {
@@ -125,61 +125,63 @@ public class ACK_SEQUENCER extends Protocol {
       return down_prot.down(evt);
    }
 
-   private Object handleMessage(Address originalSender, long seqNo, Message message) {
+   protected Object handleMessage(Address originalSender, long seqNo, Message message) {
       if (isCoordinator) {
-
-         if (trace) {
-            log.trace("Try to delivering the message " + message + " in the coordinator. Checking for ACKs...");
-         }
-
-         MessageWindow messageWindow = getMessageWindows(originalSender);
-         try {
-            messageWindow.waitUntilDeliverIsPossible(seqNo, expectedNumberOfFailedMembers, actualView.getMembers(),
-                                                     localAddress);
-         } catch (InterruptedException e) {
-            log.warn("Interrupted Exception received while waiting for the ACKs. Delivering message...");
-         }
-
-         if (trace) {
-            log.trace("Delivering message " + message + " in the coordinator");
-         }
+         awaitUntilReadyToDeliver(originalSender, seqNo, message);
       } else {
-         Message ack = new Message(coordinatorAddress);
-         ack.setSrc(localAddress);
-         ack.putHeader(id, new AckSequencerHeader(originalSender, seqNo));
-         ack.setFlag(Message.Flag.OOB, Message.Flag.NO_TOTAL_ORDER, Message.Flag.NO_FC);
-
-         if (trace) {
-            log.trace("Delivering the message " + message + " in a non-coordinator member. Sending ACK [" + ack +
-                            "] to " + coordinatorAddress);
-         }
-
-         try {
-            down_prot.down(new Event(Event.MSG, ack));
-         } catch (Exception e) {
-            log.warn("Exception caught while sending the ACK to coordinator. [" + ack + "]");
-         }
+         sendAck(originalSender, seqNo);
       }
       return up_prot.up(new Event(Event.MSG, message));
+   }
+   
+   protected final void awaitUntilReadyToDeliver(Address originalSender, long seqNo, Message message) {
+      if (log.isTraceEnabled()) {
+         log.trace("Try to delivering the message " + message + ". Checking for ACKs...");
+      }
+
+      MessageWindow messageWindow = getMessageWindows(originalSender);
+      try {
+         messageWindow.waitUntilDeliverIsPossible(seqNo, expectedNumberOfFailedMembers, actualView.getMembers(),
+                                                  localAddress);
+      } catch (InterruptedException e) {
+         log.warn("Interrupted Exception received while waiting for the ACKs. Delivering message...");
+      }
+
+      if (log.isTraceEnabled()) {
+         log.trace("Delivering message " + message);
+      }
+   }
+
+   protected final void sendAck(Address originalSender, long seqNo) {
+      Message ack = new Message(null);
+      ack.setSrc(localAddress);
+      ack.putHeader(id, new AckSequencerHeader(originalSender, seqNo));
+      ack.setFlag(Message.Flag.OOB, Message.Flag.NO_TOTAL_ORDER, Message.Flag.NO_FC);
+
+      if (log.isTraceEnabled()) {
+         log.trace("Send ack [" + ack + "] for message from " + originalSender + " [" + seqNo + "]");
+      }
+
+      try {
+         down_prot.down(new Event(Event.MSG, ack));
+      } catch (Exception e) {
+         log.warn("Exception caught while sending the ACK to coordinator. [" + ack + "]");
+      }
    }
 
    private Object handleAck(Address originalSender, long seqNo, Address from) {
       if (trace) {
          log.trace("Received ACK from " + from + " corresponding to the message [" + originalSender + "," +
-         seqNo + "]");
+                         seqNo + "]");
       }
       MessageWindow messageWindow = getMessageWindows(originalSender);
       messageWindow.addAck(from, seqNo, expectedNumberOfFailedMembers, actualView.getMembers());
       return null;
    }
 
-   private void handleViewChange(View view) {
+   protected void handleViewChange(View view) {
       synchronized (origMbrAckMap) {
-         actualView = view;
-         coordinatorAddress = view.getMembers().get(0);
-         isCoordinator = coordinatorAddress.equals(localAddress);
-         actualNumberOfMembers = view.getMembers().size();
-         updateExpectedNumberOfFailedMembers();
+         updateState(view);
 
          if (!isCoordinator) {
             origMbrAckMap.clear();
@@ -191,11 +193,22 @@ public class ACK_SEQUENCER extends Protocol {
                origMbrAckMap.put(address, new MessageWindow());
             }
          }
+      }
+      logViewChange();
+   }
 
-         if (trace) {
-            log.trace("Handle view change. Coordinator is " + coordinatorAddress + " and the number of expected failed " +
-                            "member is " + expectedNumberOfFailedMembers);
-         }
+   protected final void updateState(View view) {
+      actualView = view;
+      coordinatorAddress = view.getMembers().get(0);
+      isCoordinator = coordinatorAddress.equals(localAddress);
+      actualNumberOfMembers = view.getMembers().size();
+      updateExpectedNumberOfFailedMembers();
+   }
+
+   protected final void logViewChange() {
+      if (log.isTraceEnabled()) {
+         log.trace("Handle view change. Coordinator is " + coordinatorAddress + " and the number of expected failed " +
+                         "member is " + expectedNumberOfFailedMembers);
       }
    }
 
@@ -205,7 +218,7 @@ public class ACK_SEQUENCER extends Protocol {
       }
    }
 
-   private void updateExpectedNumberOfFailedMembers() {
+   protected void updateExpectedNumberOfFailedMembers() {
       if (percentageOfFailedMembers < 0) {
          return;
       }
