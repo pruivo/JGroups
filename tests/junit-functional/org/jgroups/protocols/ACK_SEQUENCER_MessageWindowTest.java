@@ -20,27 +20,27 @@ public class ACK_SEQUENCER_MessageWindowTest {
 
    public void testAddAck() {
       ACK_SEQUENCER.MessageWindow messageWindow = new ACK_SEQUENCER.MessageWindow();
-      addAck(messageWindow, 0);
-      check(messageWindow, 0, 0);
       addAck(messageWindow, 1);
-      check(messageWindow, 0, 1);
-      addAck(messageWindow, 3);
-      checkSequence(messageWindow, 0, 1, 3);
-      checkHighestSequenceNumber(messageWindow, 0);
+      checkSequence(messageWindow, 1);
+      addAck(messageWindow, 2);
+      checkSequence(messageWindow, 1, 2);
+      addAck(messageWindow, 4);
+      checkSequence(messageWindow, 1, 2, 4);
+      checkHighestSequenceNumber(messageWindow, 1);
    }
 
    public void testCleanDeliverMessage() {
       ACK_SEQUENCER.MessageWindow messageWindow = new ACK_SEQUENCER.MessageWindow();
-      init(messageWindow, 0, 10);
-      deliver(messageWindow, 10);
-      check(messageWindow, 10, 10);
-      checkHighestSequenceNumber(messageWindow, 10);
+      init(messageWindow, 1, 10);
+      deliver(messageWindow,1, 10);
+      checkEmpty(messageWindow);
+      checkHighestSequenceNumber(messageWindow, 11);
    }
 
    public void testAddOldAck() {
       ACK_SEQUENCER.MessageWindow messageWindow = new ACK_SEQUENCER.MessageWindow();
-      init(messageWindow, 0, 10);
-      deliver(messageWindow, 5);
+      init(messageWindow, 1, 10);      
+      deliver(messageWindow, 1, 4);
       checkHighestSequenceNumber(messageWindow, 5);
       check(messageWindow, 5, 10);
       addAck(messageWindow, 3);
@@ -53,15 +53,15 @@ public class ACK_SEQUENCER_MessageWindowTest {
 
    public void testTryDeliver() {
       ACK_SEQUENCER.MessageWindow messageWindow = new ACK_SEQUENCER.MessageWindow();
-      deliver(messageWindow, 10);
-      check(messageWindow, 10, 10);
-      checkHighestSequenceNumber(messageWindow, 10);
+      deliver(messageWindow, 1, 10);
+      checkEmpty(messageWindow);            
+      checkHighestSequenceNumber(messageWindow, 11);
    }
 
    public void testCreateAckCollector() {
       ACK_SEQUENCER.MessageWindow messageWindow = new ACK_SEQUENCER.MessageWindow();
-      init(messageWindow, 0, 10);
-      deliver(messageWindow, 5);
+      init(messageWindow, 1, 10);
+      deliver(messageWindow, 1, 4);
       checkHighestSequenceNumber(messageWindow, 5);
       Object obj = messageWindow.getOrCreate(5);
       assert obj != null : "Expected ack collector for sequence number 5, but obtained null";
@@ -77,17 +77,21 @@ public class ACK_SEQUENCER_MessageWindowTest {
       for (int i = begin; i <= end; ++i) {
          addAck(messageWindow, i);
       }
-      checkHighestSequenceNumber(messageWindow, 0);
+      checkHighestSequenceNumber(messageWindow, 1);
       check(messageWindow, begin, end);
    }
 
    private void checkHighestSequenceNumber(ACK_SEQUENCER.MessageWindow messageWindow, long expectedSeqNo) {
-      assert messageWindow.getHighestDeliverMessageSeqNo() == expectedSeqNo : "Wrong highest sequence number. " +
-            expectedSeqNo + "!=" + messageWindow.getHighestDeliverMessageSeqNo();
+      assert messageWindow.getNextSeqNoToDeliver() == expectedSeqNo : "Wrong highest sequence number. " +
+            expectedSeqNo + "!=" + messageWindow.getNextSeqNoToDeliver();
    }
 
    private void check(ACK_SEQUENCER.MessageWindow messageWindow, long begin, long end) {
       check(messageWindow.getAckWindow().keySet(), begin, end);
+   }
+
+   private void checkEmpty(ACK_SEQUENCER.MessageWindow messageWindow) {
+      assert messageWindow.getAckWindow().keySet().isEmpty() : "Expected an empty ack window";
    }
    
    private void check(Set<Long> seqNos, long begin, long end) {
@@ -97,7 +101,7 @@ public class ACK_SEQUENCER_MessageWindowTest {
          assert seqNo == value : "Wrong value in ack window." + seqNo + "!=" + value;
          value++;
       }
-   }
+   }   
 
    private void checkSequence(ACK_SEQUENCER.MessageWindow messageWindow, long... values) {
       Set<Long> longs = messageWindow.getAckWindow().keySet();
@@ -115,6 +119,12 @@ public class ACK_SEQUENCER_MessageWindowTest {
          messageWindow.waitUntilDeliverIsPossible(seqNo, 0, Collections.<Address>emptyList(), Util.createRandomAddress());
       } catch (InterruptedException e) {
          assert false : "Interrupted Exception not expected!";
+      }
+   }
+
+   private void deliver(ACK_SEQUENCER.MessageWindow messageWindow, long init, long end) {
+      for (long i = init; i <= end; ++i) {
+         deliver(messageWindow, i);
       }
    }
 

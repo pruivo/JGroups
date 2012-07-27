@@ -16,8 +16,8 @@ public class UNIFORM extends ACK_SEQUENCER {
 
    @Override
    protected Object handleMessage(Address originalSender, long seqNo, Message message) {
-      sendAck(originalSender, seqNo);
-      awaitUntilReadyToDeliver(originalSender, seqNo, message);
+      sendAck(originalSender, seqNo, null);
+      awaitUntilReadyToDeliver(originalSender, seqNo);
       return up_prot.up(new Event(Event.MSG, message));
    }
 

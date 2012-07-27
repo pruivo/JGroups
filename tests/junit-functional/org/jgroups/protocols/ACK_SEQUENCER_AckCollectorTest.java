@@ -28,7 +28,7 @@ public class ACK_SEQUENCER_AckCollectorTest {
 
       ACK_SEQUENCER.AckCollector ackCollector = new ACK_SEQUENCER.AckCollector();
       try {
-         ackCollector.await(10, Collections.<Address>emptyList(), Util.createRandomAddress());
+         ackCollector.deliver(10, Collections.<Address>emptyList(), Util.createRandomAddress());
       } catch (InterruptedException e) {
          assert false : "blocked when try to await(10, emptyList)";
       }
@@ -43,7 +43,7 @@ public class ACK_SEQUENCER_AckCollectorTest {
 
       ACK_SEQUENCER.AckCollector ackCollector = new ACK_SEQUENCER.AckCollector();
       try {
-         ackCollector.await(0, addressList, Util.createRandomAddress());
+         ackCollector.deliver(0, addressList, Util.createRandomAddress());
       } catch (InterruptedException e) {
          assert false : "blocked when try to await(0, nonEmptyList)";
       }
@@ -58,7 +58,7 @@ public class ACK_SEQUENCER_AckCollectorTest {
 
       ACK_SEQUENCER.AckCollector ackCollector = new ACK_SEQUENCER.AckCollector();
       try {
-         ackCollector.await(-1, addressList, Util.createRandomAddress());
+         ackCollector.deliver(-1, addressList, Util.createRandomAddress());
       } catch (InterruptedException e) {
          assert false : "blocked when try to await(-1, nonEmptyList)";
       }
@@ -217,7 +217,7 @@ public class ACK_SEQUENCER_AckCollectorTest {
          @Override
          public void run() {
             try {
-               ackCollector.await(0, Collections.<Address>emptyList(), Util.createRandomAddress());
+               ackCollector.deliver(0, Collections.<Address>emptyList(), Util.createRandomAddress());
                countDownLatch.countDown();
             } catch (InterruptedException e) {/*just ignore*/}
          }
@@ -230,7 +230,7 @@ public class ACK_SEQUENCER_AckCollectorTest {
          @Override
          public void run() {
             try {
-               ackCollector.await(0, Collections.<Address>emptyList(), coordinatorAddress);
+               ackCollector.deliver(0, Collections.<Address>emptyList(), coordinatorAddress);
                countDownLatch.countDown();
             } catch (InterruptedException e) {/*just ignore*/}
          }

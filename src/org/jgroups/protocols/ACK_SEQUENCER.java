@@ -8,6 +8,8 @@ import org.jgroups.View;
 import org.jgroups.annotations.ManagedAttribute;
 import org.jgroups.annotations.ManagedOperation;
 import org.jgroups.annotations.Property;
+import org.jgroups.logging.Log;
+import org.jgroups.logging.LogFactory;
 import org.jgroups.stack.Protocol;
 import org.jgroups.util.Util;
 
@@ -71,7 +73,7 @@ public class ACK_SEQUENCER extends Protocol {
       while (down != null) {
          if (down.getClass() == SEQUENCER.class) {
             sequencerHeaderID = down.getId();
-            break;
+            return;
          }
          down = down.getDownProtocol();
       }
@@ -127,16 +129,16 @@ public class ACK_SEQUENCER extends Protocol {
 
    protected Object handleMessage(Address originalSender, long seqNo, Message message) {
       if (isCoordinator) {
-         awaitUntilReadyToDeliver(originalSender, seqNo, message);
+         awaitUntilReadyToDeliver(originalSender, seqNo);
       } else {
-         sendAck(originalSender, seqNo);
+         sendAck(originalSender, seqNo, coordinatorAddress);
       }
       return up_prot.up(new Event(Event.MSG, message));
    }
-   
-   protected final void awaitUntilReadyToDeliver(Address originalSender, long seqNo, Message message) {
+
+   protected final void awaitUntilReadyToDeliver(Address originalSender, long seqNo) {
       if (log.isTraceEnabled()) {
-         log.trace("Try to delivering the message " + message + ". Checking for ACKs...");
+         log.trace("Try to delivering the message [" + originalSender + "," + seqNo + "]. Checking for ACKs...");
       }
 
       MessageWindow messageWindow = getMessageWindows(originalSender);
@@ -148,18 +150,18 @@ public class ACK_SEQUENCER extends Protocol {
       }
 
       if (log.isTraceEnabled()) {
-         log.trace("Delivering message " + message);
+         log.trace("Delivering message [" + originalSender + "," + seqNo + "]");
       }
    }
 
-   protected final void sendAck(Address originalSender, long seqNo) {
-      Message ack = new Message(null);
+   protected final void sendAck(Address originalSender, long seqNo, Address to) {
+      Message ack = new Message(to);
       ack.setSrc(localAddress);
       ack.putHeader(id, new AckSequencerHeader(originalSender, seqNo));
       ack.setFlag(Message.Flag.OOB, Message.Flag.NO_TOTAL_ORDER, Message.Flag.NO_FC);
 
       if (log.isTraceEnabled()) {
-         log.trace("Send ack [" + ack + "] for message from " + originalSender + " [" + seqNo + "]");
+         log.trace("Send ack [" + ack + "] for message from [" + originalSender + "," + seqNo + "]");
       }
 
       try {
@@ -171,7 +173,7 @@ public class ACK_SEQUENCER extends Protocol {
 
    private Object handleAck(Address originalSender, long seqNo, Address from) {
       if (trace) {
-         log.trace("Received ACK from " + from + " corresponding to the message [" + originalSender + "," +
+         log.trace("Received ACK from " + from + " for the message [" + originalSender + "," +
                          seqNo + "]");
       }
       MessageWindow messageWindow = getMessageWindows(originalSender);
@@ -234,6 +236,9 @@ public class ACK_SEQUENCER extends Protocol {
          this.seqNo = seqNo;
       }
 
+      @SuppressWarnings("UnusedDeclaration")
+      public AckSequencerHeader() {} // used for externalization
+
       @Override
       public int size() {
          return Util.size(originalSender) + Util.size(seqNo);
@@ -261,30 +266,52 @@ public class ACK_SEQUENCER extends Protocol {
    }
 
    public static class AckCollector {
+
+      private static final Log log = LogFactory.getLog(AckCollector.class);
+
       private Set<Address> membersMissing = null;
       private int numberOfAcksMissing = -1;
+      private boolean delivered = false;
 
-      public synchronized void await(int acksExpected, Collection<Address> members, Address localAddress) throws InterruptedException {
+      public final synchronized void deliver(int acksExpected, Collection<Address> members, Address localAddress) throws InterruptedException {
          populateIfNeeded(acksExpected, members);
          membersMissing.remove(localAddress);
+
+         if (log.isTraceEnabled()) {
+            log.trace("[" + Thread.currentThread().getName() + "] will block until the deliver is possible..." +
+                            "State is " + toString());
+         }
+
          if (numberOfAcksMissing > 0 && !membersMissing.isEmpty()) {
             this.wait();
          }
          membersMissing.clear();
+         delivered = true;
+         if (log.isTraceEnabled()) {
+            log.trace("[" + Thread.currentThread().getName() + "] unblocked!");
+         }
       }
 
-      public synchronized void ack(Address from, int acksExpected, Collection<Address> members) {
+      public final synchronized boolean isDelivered() {
+         return delivered;
+      }
+
+      public final synchronized void ack(Address from, int acksExpected, Collection<Address> members) {
          populateIfNeeded(acksExpected, members);
          if (membersMissing.remove(from)) {
             numberOfAcksMissing--;
          }
          if (numberOfAcksMissing == 0 || membersMissing.isEmpty()) {
-            this.notify();
+            this.notifyAll();
+         }
+
+         if (log.isTraceEnabled()) {
+            log.trace("Add ack from " + from + ". State is " + toString());
          }
       }
 
       //TEST_ONLY
-      public synchronized void populateIfNeeded(int acksExpected, Collection<Address> members) {
+      public final synchronized void populateIfNeeded(int acksExpected, Collection<Address> members) {
          if (membersMissing == null) {
             this.numberOfAcksMissing = acksExpected;
             this.membersMissing = new HashSet<Address>(members);
@@ -292,17 +319,17 @@ public class ACK_SEQUENCER extends Protocol {
       }
 
       //TEST ONLY!!
-      public int getNumberOfAcksMissing() {
+      public final synchronized int getNumberOfAcksMissing() {
          return numberOfAcksMissing;
       }
 
       //TEST ONLY!!
-      public int getSizeOfMembersMissing() {
+      public final synchronized int getSizeOfMembersMissing() {
          return membersMissing.size();
       }
 
       @Override
-      public String toString() {
+      public synchronized String toString() {
          return "AckCollector{" +
                "membersMissing=" + membersMissing +
                ", numberOfAcksMissing=" + numberOfAcksMissing +
@@ -311,22 +338,35 @@ public class ACK_SEQUENCER extends Protocol {
    }
 
    public static class MessageWindow {
-      private volatile long highestDeliverMessageSeqNo = 0;
-      private ConcurrentSkipListMap<Long, AckCollector> ackWindow = new ConcurrentSkipListMap<Long, AckCollector>();
 
-      public void waitUntilDeliverIsPossible(long seqNo, int numberOfAcksMissing, Collection<Address> members,
-                                             Address localAddress)
+      private static final Log log = LogFactory.getLog(MessageWindow.class);
+
+      private volatile long nextSeqNoToDeliver = 1;
+      private final ConcurrentSkipListMap<Long, AckCollector> ackWindow = new ConcurrentSkipListMap<Long, AckCollector>();
+
+      public final void waitUntilDeliverIsPossible(long seqNo, int numberOfAcksMissing, Collection<Address> members,
+                                                   Address localAddress)
             throws InterruptedException {
-         highestDeliverMessageSeqNo = seqNo;
          AckCollector ackCollector = getOrCreate(seqNo);
-         ackCollector.await(numberOfAcksMissing, members, localAddress);
+
+         if (log.isTraceEnabled()) {
+            log.trace("[" + Thread.currentThread().getName() + "] wants to deliver message with sequence number " +
+                            seqNo + ". Ack collector is " + ackCollector);
+         }
+
+         ackCollector.deliver(numberOfAcksMissing, members, localAddress);
          removeOldAckCollectors();
       }
 
-      public void addAck(Address from, long seqNo, int numberOfAcksMissing, Collection<Address> members) {
+      public final void addAck(Address from, long seqNo, int numberOfAcksMissing, Collection<Address> members) {
          AckCollector ackCollector = getOrCreate(seqNo);
-         if (ackCollector == null || seqNo < highestDeliverMessageSeqNo) {
-            removeOldAckCollectors();
+
+         if (log.isTraceEnabled()) {
+            log.trace("Add ack from " + from + " with sequencer number [" + seqNo + "," + nextSeqNoToDeliver + "] to " +
+                            ackCollector);
+         }
+
+         if (ackCollector == null || seqNo < nextSeqNoToDeliver) {
             return;
          }
          ackCollector.ack(from, numberOfAcksMissing, members);
@@ -335,14 +375,14 @@ public class ACK_SEQUENCER extends Protocol {
       //test
       public AckCollector getOrCreate(long seqNo) {
          AckCollector ackCollector = ackWindow.get(seqNo);
-         if (ackCollector == null && seqNo >= highestDeliverMessageSeqNo) {
+         if (ackCollector == null && seqNo >= nextSeqNoToDeliver) {
             ackCollector =  new AckCollector();
             AckCollector existing = ackWindow.putIfAbsent(seqNo, ackCollector);
             if (existing != null) {
                ackCollector = existing;
             }
          }
-         removeOldAckCollectors();
+         //removeOldAckCollectors();
          return ackCollector;
       }
 
@@ -352,8 +392,11 @@ public class ACK_SEQUENCER extends Protocol {
                return;
             }
             long key = ackWindow.firstKey();
-            if (key < highestDeliverMessageSeqNo) {
+            if (key < nextSeqNoToDeliver) {
                ackWindow.remove(key);
+            } else if (key == nextSeqNoToDeliver && ackWindow.get(key).isDelivered()){
+               ackWindow.remove(key);
+               nextSeqNoToDeliver++;
             } else {
                break;
             }
@@ -361,19 +404,19 @@ public class ACK_SEQUENCER extends Protocol {
       }
 
       //test
-      public long getHighestDeliverMessageSeqNo() {
-         return highestDeliverMessageSeqNo;
+      public final long getNextSeqNoToDeliver() {
+         return nextSeqNoToDeliver;
       }
 
       //test
-      public ConcurrentSkipListMap<Long, AckCollector> getAckWindow() {
+      public final ConcurrentSkipListMap<Long, AckCollector> getAckWindow() {
          return ackWindow;
       }
 
       @Override
-      public String toString() {
+      public final String toString() {
          return "MessageWindow{" +
-               "highestDeliverMessageSeqNo=" + highestDeliverMessageSeqNo +
+               "nextSeqNoToDeliver=" + nextSeqNoToDeliver +
                ", ackWindow=" + ackWindow +
                '}';
       }
