@@ -41,6 +41,7 @@ public class TOA extends Protocol {
     private volatile View currentView;
 
     private final boolean trace = log.isTraceEnabled();
+    private final boolean debug = log.isDebugEnabled();
 
     public TOA() {
     }
@@ -111,8 +112,8 @@ public class TOA extends Protocol {
                         handleFinalSequenceNumber(header);
                         break;
                     case ToaHeader.SINGLE_DESTINATION_MESSAGE:
-                        if (log.isTraceEnabled()) {
-                            log.trace("Received message " + message + " with SINGLE_DESTINATION header. delivering...");
+                        if (trace) {
+                            log.trace(String.format("Received message '%s' with SINGLE_DESTINATION header.", header.getMessageID()));
                         }
                         deliverManager.addReadyToDeliver(header.getMessageID(), message);
                         break;
@@ -135,8 +136,8 @@ public class TOA extends Protocol {
     public void deliver(Message message) {
         message.setDest(localAddress);
 
-        if (log.isDebugEnabled()) {
-            log.debug("Deliver message " + message + "(" + message.getHeader(id) + ") in total order");
+        if (debug) {
+            log.debug(String.format("Deliver message '%s' in total order", message));
         }
 
         up_prot.up(new Event(Event.MSG, message));
@@ -149,8 +150,8 @@ public class TOA extends Protocol {
     }
 
     private void handleViewChange(View view) {
-        if (log.isTraceEnabled()) {
-            log.trace("Handle view " + view);
+        if (trace) {
+            log.trace(String.format("Handling a new view: %s", view));
         }
         //View oldView = currentView;
         currentView = view;
@@ -201,8 +202,8 @@ public class TOA extends Protocol {
             message.setDest(destinations.get(0));
 
             if (trace) {
-                log.trace("Sending total order anycast message " + message +  " (" + message.getHeader(id) +
-                        ") to single destination");
+                log.trace(String.format("Sending total order anycast message (id='%s') to a single destination '%s'",
+                        messageID, message.getDest()));
             }
 
             if (deliverToMySelf) {
@@ -218,20 +219,18 @@ public class TOA extends Protocol {
             if (deliverToMySelf) {
                 sequenceNumber = deliverManager.put(messageID, message, sequenceNumber);
             }
-            ToaHeader header = ToaHeader.newDataMessageHeader(messageID, sequenceNumber);
-            message.putHeader(this.id, header);
+            message.putHeader(this.id, ToaHeader.newDataMessageHeader(messageID, sequenceNumber));
 
             if (trace) {
-                log.trace("Sending total order anycast message " + message +  " (" + message.getHeader(id) +
-                        ") to " + destinations);
+                log.trace(String.format("Sending total order anycast message (id='%s') to a multiple destination '%s'",
+                        messageID, destinations));
             }
 
             senderManager.put(messageID, destinations, localAddress, sequenceNumber);
             send(destinations, message, true);
             duration = statsCollector.now() - startTime;
         } catch (Exception e) {
-            logException("Exception caught while sending anycast message. Error is " + e.getLocalizedMessage(),
-                    e);
+            logException("Exception caught while sending anycast message. Error is " + e.getLocalizedMessage(), e);
         } finally {
             statsCollector.addAnycastSentDuration(duration, (destinations.size() - (deliverToMySelf ? 1 : 0)));
         }
@@ -242,9 +241,6 @@ public class TOA extends Protocol {
     }
 
     private void send(Collection<Address> destinations, Message msg, boolean excludeLocal) {
-        if (log.isDebugEnabled()) {
-            log.debug("sending anycast total order message " + msg + " to " + destinations);
-        }
         for (Address address : destinations) {
             if (excludeLocal && address.equals(localAddress)) {
                 continue;
@@ -265,16 +261,15 @@ public class TOA extends Protocol {
             //create the sequence number and put it in deliver manager
             long myProposeSequenceNumber = deliverManager.put(messageID, message, header.getSequencerNumber());
 
-            if (log.isTraceEnabled()) {
-                log.trace("Received the message with " + header + ". The proposed sequence number is " +
-                        myProposeSequenceNumber);
+            if (trace) {
+                log.trace(String.format("Received data message (id='%s'). My SeqNo=%s (received SeqNo=%s).",
+                        messageID, myProposeSequenceNumber, header.getSequencerNumber()));
             }
 
             //create a new message and send it back
-            ToaHeader newHeader = ToaHeader.newProposeMessageHeader(messageID, myProposeSequenceNumber);
-
             Message proposeMessage = new Message().src(localAddress).dest(messageID.getAddress())
-                    .putHeader(this.id, newHeader).setFlag(Message.Flag.OOB, Message.Flag.INTERNAL, Message.Flag.DONT_BUNDLE);
+                    .putHeader(this.id, ToaHeader.newProposeMessageHeader(messageID, myProposeSequenceNumber))
+                    .setFlag(Message.Flag.OOB, Message.Flag.INTERNAL, Message.Flag.DONT_BUNDLE);
 
             down_prot.down(new Event(Event.MSG, proposeMessage));
             duration = statsCollector.now() - startTime;
@@ -290,12 +285,11 @@ public class TOA extends Protocol {
         long duration = -1;
         boolean lastProposeReceived = false;
 
-        boolean trace = log.isTraceEnabled();
         try {
             MessageID messageID = header.getMessageID();
             if (trace) {
-                log.trace("Received the proposed sequence number message with " + header + " from " +
-                        from);
+                log.trace(String.format("Received propose sequence number from '%s' for message (id='%s'). SeqNo=%s",
+                        from, header.getMessageID(), header.getSequencerNumber()));
             }
 
             deliverManager.updateSequenceNumber(header.getSequencerNumber());
@@ -304,16 +298,14 @@ public class TOA extends Protocol {
             if (finalSequenceNumber != SendManager.NOT_READY) {
                 lastProposeReceived = true;
 
-                ToaHeader finalHeader = ToaHeader.newFinalMessageHeader(messageID, finalSequenceNumber);
-
-                Message finalMessage = new Message().src(localAddress).putHeader(this.id, finalHeader)
+                Message finalMessage = new Message().src(localAddress)
+                        .putHeader(this.id, ToaHeader.newFinalMessageHeader(messageID, finalSequenceNumber))
                         .setFlag(Message.Flag.OOB, Message.Flag.INTERNAL, Message.Flag.DONT_BUNDLE);
 
                 List<Address> destinations = senderManager.getElements(messageID);
 
                 if (trace) {
-                    log.trace("Message " + messageID + " is ready to be deliver. Final sequencer number is " +
-                            finalSequenceNumber);
+                    log.trace(String.format("Message (id='%s') is ready to deliver.SeqNo=%s", messageID, finalSequenceNumber));
                 }
 
                 send(destinations, finalMessage, true);
@@ -335,8 +327,9 @@ public class TOA extends Protocol {
 
         try {
             MessageID messageID = header.getMessageID();
-            if (log.isTraceEnabled()) {
-                log.trace("Received the final sequence number message with " + header);
+            if (trace) {
+                log.trace(String.format("Received final sequence number for message (id='%s'). SeqNo=%s",
+                        messageID, header.getSequencerNumber()));
             }
 
             deliverManager.markFinal(messageID, header.getSequencerNumber());
@@ -349,7 +342,7 @@ public class TOA extends Protocol {
     }
 
     private void logException(String msg, Exception e) {
-        if (log.isDebugEnabled()) {
+        if (debug) {
             log.debug(msg, e);
         } else if (log.isWarnEnabled()) {
             log.warn(msg + ". Error is " + e.getLocalizedMessage());
