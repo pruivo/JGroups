@@ -4,8 +4,6 @@ import org.jgroups.Message;
 import org.jgroups.logging.Log;
 import org.jgroups.logging.LogFactory;
 
-import java.util.List;
-
 /**
  * The delivery thread. Is the only thread that delivers the Total Order Anycast message in order
  *
@@ -13,21 +11,20 @@ import java.util.List;
  * @since 3.1
  */
 public class DeliveryThread extends Thread {
-    private DeliveryManager  deliveryManager;
-    private volatile boolean running = false;
-    private DeliveryProtocol deliveryProtocol;
-
     private final Log log = LogFactory.getLog(this.getClass());
+    private DeliverManager<?, Message> deliveryManager;
+    private volatile boolean running = false;
+    private TOA deliveryProtocol;
 
-    public DeliveryThread(DeliveryProtocol protocol) {
+    public DeliveryThread(TOA protocol) {
         super("TOA-Delivery-Thread");
         if (protocol == null) {
             throw new NullPointerException("TOA Protocol can't be null");
         }
-        this.deliveryProtocol= protocol;
+        this.deliveryProtocol = protocol;
     }
 
-    public void start(DeliveryManager deliveryManager) {
+    public void start(DeliverManager<?, Message> deliveryManager) {
         this.deliveryManager = deliveryManager;
         start();
     }
@@ -47,15 +44,17 @@ public class DeliveryThread extends Thread {
 
     @Override
     public void run() {
+        Message[] buffer = new Message[32];
         while (running) {
             try {
-                List<Message> messages = deliveryManager.getNextMessagesToDeliver();
-
-                for (Message msg : messages) {
+                final int ready = deliveryManager.deliverReady(buffer);
+                for (int i = 0; i < ready; ++i) {
                     try {
-                        deliveryProtocol.deliver(msg);
-                    } catch(Throwable t) {
-                        log.warn("Exception caught while delivering message " + msg + ":" + t.getMessage());
+                        deliveryProtocol.deliver(buffer[i]);
+                    } catch (Throwable t) {
+                        log.warn("Exception caught while delivering message " + buffer[i] + ":" + t.getMessage());
+                    } finally {
+                        buffer[i] = null;
                     }
                 }
             } catch (InterruptedException e) {

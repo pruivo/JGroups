@@ -1,16 +1,11 @@
 package org.jgroups.protocols.tom;
 
-import org.jgroups.Address;
 import org.jgroups.Global;
 import org.jgroups.Header;
 import org.jgroups.util.Bits;
-import org.jgroups.util.Util;
 
 import java.io.DataInput;
 import java.io.DataOutput;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
 
 /**
  * The header for the Total Order Anycast (TOA) protocol
@@ -29,7 +24,6 @@ public class ToaHeader extends Header {
     private byte type = 0;
     private MessageID messageID; //address and sequence number
     private long sequencerNumber;
-    private Collection<Address> destinations;
 
     public ToaHeader() {
     }
@@ -41,15 +35,6 @@ public class ToaHeader extends Header {
 
     public MessageID getMessageID() {
         return messageID;
-    }
-
-    private ToaHeader setDestinations(Collection<Address> addresses) {
-        this.destinations = addresses;
-        return this;
-    }
-
-    public Collection<Address> getDestinations() {
-        return Collections.unmodifiableCollection(destinations);
     }
 
     public long getSequencerNumber() {
@@ -67,8 +52,7 @@ public class ToaHeader extends Header {
 
     @Override
     public int size() {
-        return (int) (Global.BYTE_SIZE + messageID.serializedSize() + Bits.size(sequencerNumber) +
-                Util.size(destinations));
+        return Global.BYTE_SIZE + messageID.serializedSize() + Bits.size(sequencerNumber);
     }
 
     @Override
@@ -76,9 +60,6 @@ public class ToaHeader extends Header {
         out.writeByte(type);
         messageID.writeTo(out);
         Bits.writeLong(sequencerNumber, out);
-        if (type == DATA_MESSAGE) {
-            Util.writeAddresses(destinations, out);
-        }
     }
 
     @Override
@@ -87,9 +68,6 @@ public class ToaHeader extends Header {
         messageID = new MessageID();
         messageID.readFrom(in);
         sequencerNumber = Bits.readLong(in);
-        if (type == DATA_MESSAGE) {
-            destinations = (Collection<Address>) Util.readAddresses(in, ArrayList.class);
-        }
     }
 
     @Override
@@ -98,7 +76,6 @@ public class ToaHeader extends Header {
                 "type=" + type2String(type) +
                 ", message_id=" + messageID +
                 ", sequence_number=" + sequencerNumber +
-                ", destinations=" + destinations +
                 '}';
     }
 
@@ -117,9 +94,9 @@ public class ToaHeader extends Header {
         }
     }
 
-    public static ToaHeader newDataMessageHeader(MessageID messageID, Collection<Address> destinations) {
+    public static ToaHeader newDataMessageHeader(MessageID messageID, long sequencerNumber) {
         assertMessageIDNotNull(messageID);
-        return new ToaHeader(messageID, DATA_MESSAGE).setDestinations(new ArrayList<>(destinations));
+        return new ToaHeader(messageID, DATA_MESSAGE).setSequencerNumber(sequencerNumber);
     }
 
     public static ToaHeader newProposeMessageHeader(MessageID messageID, long sequencerNumber) {

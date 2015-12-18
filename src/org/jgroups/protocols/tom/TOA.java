@@ -9,7 +9,6 @@ import org.jgroups.stack.Protocol;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -23,10 +22,10 @@ import java.util.concurrent.atomic.AtomicLong;
  * @since 3.1
  */
 @MBean(description = "Implementation of Total Order Anycast based on Skeen's Algorithm")
-public class TOA extends Protocol implements DeliveryProtocol {
+public class TOA extends Protocol {
     //managers
-    private DeliveryManagerImpl deliverManager;
-    private SenderManager senderManager;
+    private DeliverManager<MessageID, Message> deliverManager;
+    private SendManager<MessageID, Address> senderManager;
 
     // threads
     private final DeliveryThread deliverThread = new DeliveryThread(this);
@@ -41,13 +40,15 @@ public class TOA extends Protocol implements DeliveryProtocol {
     private final StatsCollector statsCollector = new StatsCollector();
     private volatile View currentView;
 
+    private final boolean trace = log.isTraceEnabled();
+
     public TOA() {
     }
 
     @Override
     public void start() throws Exception {
-        deliverManager = new DeliveryManagerImpl();
-        senderManager = new SenderManager();
+        deliverManager = new DeliverManager<>();
+        senderManager = new SendManager<>();
         deliverThread.start(deliverManager);
         statsCollector.setStatsEnabled(statsEnabled());
     }
@@ -61,11 +62,22 @@ public class TOA extends Protocol implements DeliveryProtocol {
     public Object down(Event evt) {
         switch (evt.getType()) {
             case Event.MSG:
-                handleDownMessage(evt);
+                Message message = (Message) evt.getArg();
+                Address dest = message.getDest();
+
+                if (dest != null && dest instanceof AnycastAddress && !message.isFlagSet(Message.Flag.NO_TOTAL_ORDER)) {
+                    //anycast message
+                    sendTotalOrderAnycastMessage(extract((AnycastAddress) dest), message);
+                } else if (dest != null && dest instanceof AnycastAddress) {
+                    //anycast address with NO_TOTAL_ORDER flag (should no be possible, but...)
+                    send(extract((AnycastAddress) dest), message, false);
+                } else {
+                    //normal message
+                    break;
+                }
                 return null;
             case Event.SET_LOCAL_ADDRESS:
-                this.localAddress = (Address) evt.getArg();
-                this.deliverThread.setLocalAddress(localAddress.toString());
+                setLocalAddress((Address) evt.getArg());
                 break;
             case Event.VIEW_CHANGE:
                 handleViewChange((View) evt.getArg());
@@ -102,7 +114,7 @@ public class TOA extends Protocol implements DeliveryProtocol {
                         if (log.isTraceEnabled()) {
                             log.trace("Received message " + message + " with SINGLE_DESTINATION header. delivering...");
                         }
-                        deliverManager.deliverSingleDestinationMessage(message, header.getMessageID());
+                        deliverManager.addReadyToDeliver(header.getMessageID(), message);
                         break;
                     default:
                         throw new IllegalStateException("Unknown header type received " + header);
@@ -112,8 +124,7 @@ public class TOA extends Protocol implements DeliveryProtocol {
                 handleViewChange((View) evt.getArg());
                 break;
             case Event.SET_LOCAL_ADDRESS:
-                this.localAddress = (Address) evt.getArg();
-                this.deliverThread.setLocalAddress(localAddress.toString());
+                setLocalAddress((Address) evt.getArg());
                 break;
             default:
                 break;
@@ -121,7 +132,6 @@ public class TOA extends Protocol implements DeliveryProtocol {
         return up_prot.up(evt);
     }
 
-    @Override
     public void deliver(Message message) {
         message.setDest(localAddress);
 
@@ -133,13 +143,18 @@ public class TOA extends Protocol implements DeliveryProtocol {
         statsCollector.incrementMessageDeliver();
     }
 
+    private void setLocalAddress(Address localAddress) {
+        this.localAddress = localAddress;
+        this.deliverThread.setLocalAddress(localAddress.toString());
+    }
+
     private void handleViewChange(View view) {
         if (log.isTraceEnabled()) {
             log.trace("Handle view " + view);
         }
-        View oldView = currentView;
+        //View oldView = currentView;
         currentView = view;
-
+        /*
         //basis behavior: drop leavers message (as senders)
         List<Address> leavers = View.leftMembers(oldView, view);
         deliverManager.removeLeavers(leavers);
@@ -170,36 +185,18 @@ public class TOA extends Protocol implements DeliveryProtocol {
                 }
             }
         }
+        */
         // TODO: Future work: How to add fault tolerance? (simple and efficient)
     }
 
-    private void handleDownMessage(Event evt) {
-        Message message = (Message) evt.getArg();
-        Address dest = message.getDest();
-
-        if (dest != null && dest instanceof AnycastAddress && !message.isFlagSet(Message.Flag.NO_TOTAL_ORDER)) {
-            //anycast message
-            sendTotalOrderAnycastMessage(extract((AnycastAddress) dest), message);
-        } else if (dest != null && dest instanceof AnycastAddress) {
-            //anycast address with NO_TOTAL_ORDER flag (should no be possible, but...)
-            send(extract((AnycastAddress) dest), message, true);
-        } else {
-            //normal message
-            down_prot.down(evt);
-        }
-    }
-
-
     private void sendTotalOrderAnycastMessage(List<Address> destinations, Message message) {
-        boolean trace = log.isTraceEnabled();
-
         long startTime = statsCollector.now();
         long duration = -1;
 
+        final MessageID messageID = generateId();
         final boolean deliverToMySelf = destinations.contains(localAddress);
 
         if (destinations.size() == 1) {
-            MessageID messageID = generateId();
             message.putHeader(id, ToaHeader.createSingleDestinationHeader(messageID));
             message.setDest(destinations.get(0));
 
@@ -209,7 +206,7 @@ public class TOA extends Protocol implements DeliveryProtocol {
             }
 
             if (deliverToMySelf) {
-                deliverManager.deliverSingleDestinationMessage(message, messageID);
+                deliverManager.addReadyToDeliver(messageID, message);
             } else {
                 down_prot.down(new Event(Event.MSG, message));
             }
@@ -217,22 +214,20 @@ public class TOA extends Protocol implements DeliveryProtocol {
         }
 
         try {
-            final MessageID messageID = generateId();
             long sequenceNumber = -1;
-            ToaHeader header = ToaHeader.newDataMessageHeader(messageID, destinations);
-            message.putHeader(this.id, header);
-
             if (deliverToMySelf) {
-                sequenceNumber = deliverManager.addLocalMessageToDeliver(messageID, message, header);
+                sequenceNumber = deliverManager.put(messageID, message, sequenceNumber);
             }
+            ToaHeader header = ToaHeader.newDataMessageHeader(messageID, sequenceNumber);
+            message.putHeader(this.id, header);
 
             if (trace) {
                 log.trace("Sending total order anycast message " + message +  " (" + message.getHeader(id) +
                         ") to " + destinations);
             }
 
-            senderManager.addNewMessageToSend(messageID, destinations, sequenceNumber, deliverToMySelf);
-            send(destinations, message, false);
+            senderManager.put(messageID, destinations, localAddress, sequenceNumber);
+            send(destinations, message, true);
             duration = statsCollector.now() - startTime;
         } catch (Exception e) {
             logException("Exception caught while sending anycast message. Error is " + e.getLocalizedMessage(),
@@ -246,12 +241,12 @@ public class TOA extends Protocol implements DeliveryProtocol {
         return new MessageID(localAddress, messageIdCounter.getAndIncrement());
     }
 
-    private void send(Collection<Address> destinations, Message msg, boolean sendToMyself) {
+    private void send(Collection<Address> destinations, Message msg, boolean excludeLocal) {
         if (log.isDebugEnabled()) {
             log.debug("sending anycast total order message " + msg + " to " + destinations);
         }
         for (Address address : destinations) {
-            if (!sendToMyself && address.equals(localAddress)) {
+            if (excludeLocal && address.equals(localAddress)) {
                 continue;
             }
             Message cpy = msg.copy();
@@ -268,8 +263,7 @@ public class TOA extends Protocol implements DeliveryProtocol {
             final MessageID messageID = header.getMessageID();
 
             //create the sequence number and put it in deliver manager
-            long myProposeSequenceNumber = deliverManager.addRemoteMessageToDeliver(messageID, message,
-                    header.getSequencerNumber());
+            long myProposeSequenceNumber = deliverManager.put(messageID, message, header.getSequencerNumber());
 
             if (log.isTraceEnabled()) {
                 log.trace("Received the message with " + header + ". The proposed sequence number is " +
@@ -282,7 +276,6 @@ public class TOA extends Protocol implements DeliveryProtocol {
             Message proposeMessage = new Message().src(localAddress).dest(messageID.getAddress())
                     .putHeader(this.id, newHeader).setFlag(Message.Flag.OOB, Message.Flag.INTERNAL, Message.Flag.DONT_BUNDLE);
 
-            //multicastSenderThread.addUnicastMessage(proposeMessage);
             down_prot.down(new Event(Event.MSG, proposeMessage));
             duration = statsCollector.now() - startTime;
         } catch (Exception e) {
@@ -306,10 +299,9 @@ public class TOA extends Protocol implements DeliveryProtocol {
             }
 
             deliverManager.updateSequenceNumber(header.getSequencerNumber());
-            long finalSequenceNumber = senderManager.addPropose(messageID, from,
-                    header.getSequencerNumber());
+            long finalSequenceNumber = senderManager.addPropose(messageID, from, header.getSequencerNumber());
 
-            if (finalSequenceNumber != SenderManager.NOT_READY) {
+            if (finalSequenceNumber != SendManager.NOT_READY) {
                 lastProposeReceived = true;
 
                 ToaHeader finalHeader = ToaHeader.newFinalMessageHeader(messageID, finalSequenceNumber);
@@ -317,21 +309,16 @@ public class TOA extends Protocol implements DeliveryProtocol {
                 Message finalMessage = new Message().src(localAddress).putHeader(this.id, finalHeader)
                         .setFlag(Message.Flag.OOB, Message.Flag.INTERNAL, Message.Flag.DONT_BUNDLE);
 
-                Set<Address> destinations = senderManager.getDestination(messageID);
-                if (destinations.contains(localAddress)) {
-                    destinations.remove(localAddress);
-                }
+                List<Address> destinations = senderManager.getElements(messageID);
 
                 if (trace) {
                     log.trace("Message " + messageID + " is ready to be deliver. Final sequencer number is " +
                             finalSequenceNumber);
                 }
 
-                send(destinations, finalMessage, false);
-                //returns true if we are in destination set
-                if (senderManager.markSent(messageID)) {
-                    deliverManager.markReadyToDeliver(messageID, finalSequenceNumber);
-                }
+                send(destinations, finalMessage, true);
+                deliverManager.markFinal(messageID, finalSequenceNumber);
+                senderManager.addDelivered(messageID, localAddress);
             }
 
             duration = statsCollector.now() - startTime;
@@ -352,7 +339,7 @@ public class TOA extends Protocol implements DeliveryProtocol {
                 log.trace("Received the final sequence number message with " + header);
             }
 
-            deliverManager.markReadyToDeliver(messageID, header.getSequencerNumber());
+            deliverManager.markFinal(messageID, header.getSequencerNumber());
             duration = statsCollector.now() - startTime;
         } catch (Exception e) {
             logException("Exception caught while processing the final sequence number for " + header.getMessageID(), e);
@@ -380,7 +367,8 @@ public class TOA extends Protocol implements DeliveryProtocol {
 
     @ManagedOperation
     public String getMessageList() {
-        return deliverManager.getMessageSet().toString();
+        //return deliverManager.getMessageSet().toString();
+        return null;
     }
 
     @Override
