@@ -379,13 +379,18 @@ public class MessageBatch implements Iterable<Message> {
 
 
     /** Iterator which iterates only over non-null messages, skipping null messages */
-    public Iterator<Message> iterator() {
-        return new BatchIterator(index);
+    public MessageIterator iterator() {
+        return new BatchIterator(index, null);
     }
 
     public Stream<Message> stream() {
         Spliterator<Message> sp=Spliterators.spliterator(iterator(), size(), 0);
         return StreamSupport.stream(sp, false);
+    }
+
+    public MessageIterator iterateWithHeader(short header_id) {
+        Predicate<Message> header_filter = msg -> msg.getHeader(header_id) != null;
+        return new BatchIterator(index, header_filter);
     }
 
 
@@ -432,30 +437,56 @@ public class MessageBatch implements Iterable<Message> {
 
 
     /** Iterates over <em>non-null</em> elements of a batch, skipping null elements */
-    protected class BatchIterator implements Iterator<Message> {
-        protected int       current_index=-1;
+    protected class BatchIterator implements MessageIterator {
+        protected int       last_returned = -1;
+        protected int       next_index = -1;
         protected final int saved_index; // index at creation time of the iterator
+        private final Predicate<Message> filter;
 
-        public BatchIterator(int saved_index) {
+        public BatchIterator(int saved_index, Predicate<Message> filter) {
             this.saved_index=saved_index;
+            this.filter = filter == null ? message -> true : filter;
+            findNext();
         }
 
         public boolean hasNext() {
-            // skip null elements
-            while(current_index +1 < saved_index && messages[current_index+1] == null)
-                current_index++;
-            return current_index +1 < saved_index;
+            return next_index != -1;
         }
 
         public Message next() {
-            if(current_index +1 >= messages.length)
+            if (next_index == -1) {
                 throw new NoSuchElementException();
-            return messages[++current_index];
+            }
+            last_returned = next_index;
+            Message msg = messages[next_index];
+            if (msg == null) {
+                throw new ConcurrentModificationException();
+            }
+            findNext();
+            return msg;
         }
 
         public void remove() {
-            if(current_index >= 0)
-                messages[current_index]=null;
+            messages[last_returned] = null;
+        }
+
+
+        @Override
+        public void replace(Message msg) {
+            messages[last_returned] = msg;
+        }
+
+        private void findNext() {
+            int index = next_index + 1;
+            while (index < saved_index) {
+                Message msg = messages[index];
+                if (msg != null && filter.test(msg)) {
+                    next_index = index;
+                    return;
+                }
+                index++;
+            }
+            next_index = -1;
         }
     }
 

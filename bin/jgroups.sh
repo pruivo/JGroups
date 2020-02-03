@@ -32,7 +32,7 @@ if [ -f $HOME/logging.properties ]; then
     LOG="$LOG -Djava.util.logging.config.file=$HOME/logging.properties"
 fi;
 
-#JG_FLAGS="-Djgroups.bind_addr=match-address:192.168.1.*"
+JG_FLAGS="-Djgroups.bind_addr=match-address:192.168.2.*"
 FLAGS="-server -Xmx1G -Xms500M"
 GC="-XX:+UseG1GC"
 

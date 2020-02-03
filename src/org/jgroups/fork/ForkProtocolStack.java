@@ -5,6 +5,7 @@ import org.jgroups.protocols.FORK;
 import org.jgroups.stack.Protocol;
 import org.jgroups.stack.ProtocolStack;
 import org.jgroups.util.MessageBatch;
+import org.jgroups.util.MessageIterator;
 import org.jgroups.util.Util;
 
 import java.util.*;
@@ -133,14 +134,13 @@ public class ForkProtocolStack extends ProtocolStack {
 
     public void up(MessageBatch batch) {
         // Sort fork messages by fork-channel-id
+        MessageIterator iterator = batch.iterateWithHeader(FORK.ID);
         Map<String,List<Message>> map=new HashMap<>();
-        for(Message msg: batch) {
-            FORK.ForkHeader hdr=msg.getHeader(FORK.ID);
-            if(hdr != null) {
-                batch.remove(msg);
-                List<Message> list=map.computeIfAbsent(hdr.getForkChannelId(), k -> new ArrayList<>());
-                list.add(msg);
-            }
+        while (iterator.hasNext()) {
+            Message msg = iterator.next();
+            iterator.remove();
+            FORK.ForkHeader hdr = msg.getHeader(FORK.ID);
+            map.computeIfAbsent(hdr.getForkChannelId(), k -> new ArrayList<>()).add(msg);
         }
 
         // Now pass fork messages up, batched by fork-channel-id

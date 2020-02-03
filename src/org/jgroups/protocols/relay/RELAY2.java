@@ -485,7 +485,9 @@ public class RELAY2 extends Protocol {
     }
 
     public void up(MessageBatch batch) {
-        for(Message msg: batch) {
+        MessageIterator iterator = batch.iterator();
+        while (iterator.hasNext()) {
+            Message msg = iterator.next();
             Relay2Header hdr=msg.getHeader(id);
             Address dest=msg.getDest();
 
@@ -500,11 +502,10 @@ public class RELAY2 extends Protocol {
                 }
             }
             else { // header is not null
+                iterator.remove();
                 if(handleAdminMessage(hdr, batch.sender())) {
-                    batch.remove(msg);
                     continue;
                 }
-                batch.remove(msg); // message is consumed
                 if(dest != null)
                     handleMessage(hdr, msg);
                 else

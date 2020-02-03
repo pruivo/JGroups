@@ -145,14 +145,22 @@ public class FORK extends Protocol {
     public void up(MessageBatch batch) {
         // Sort fork messages by fork-stack-id
         Map<String,List<Message>> map=new HashMap<>();
-        for(Message msg: batch) {
-            ForkHeader hdr=msg.getHeader(id);
-            if(hdr != null) {
-                batch.remove(msg);
-                List<Message> list=map.computeIfAbsent(hdr.fork_stack_id, k -> new ArrayList<>());
-                list.add(msg);
-            }
+
+        MessageIterator iterator = batch.iterateWithHeader(id);
+        while (iterator.hasNext()) {
+            Message msg = iterator.next();
+            iterator.remove();
+            ForkHeader header = msg.getHeader(id);
+            map.computeIfAbsent(header.fork_stack_id, k -> new ArrayList<>()).add(msg);
         }
+//        for(Message msg: batch) {
+//            ForkHeader hdr=msg.getHeader(id);
+//            if(hdr != null) {
+//                batch.remove(msg);
+//                List<Message> list=map.computeIfAbsent(hdr.fork_stack_id, k -> new ArrayList<>());
+//                list.add(msg);
+//            }
+//        }
 
         // Now pass fork messages up, batched by fork-stack-id
         for(Map.Entry<String,List<Message>> entry: map.entrySet()) {
@@ -176,7 +184,6 @@ public class FORK extends Protocol {
         if(!batch.isEmpty())
             up_prot.up(batch);
     }
-
 
     protected void getStateFromMainAndForkChannels(Event evt) {
         final OutputStream out=evt.getArg();

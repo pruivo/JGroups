@@ -1,2 +1,2 @@
 #!/bin/bash
-jgroups.sh org.jgroups.tests.perf.UPerf $*
+$JGROUPS_HOME/bin/jgroups.sh org.jgroups.tests.perf.UPerf $*

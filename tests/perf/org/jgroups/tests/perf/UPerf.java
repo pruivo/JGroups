@@ -4,6 +4,7 @@ import org.jgroups.*;
 import org.jgroups.annotations.Property;
 import org.jgroups.blocks.*;
 import org.jgroups.conf.ClassConfigurator;
+import org.jgroups.fork.ForkChannel;
 import org.jgroups.jmx.JmxConfigurator;
 import org.jgroups.protocols.TP;
 import org.jgroups.protocols.relay.RELAY2;
@@ -29,6 +30,7 @@ import java.util.concurrent.atomic.LongAdder;
  */
 public class UPerf extends ReceiverAdapter {
     private JChannel               channel;
+    private JChannel               mainChannel;
     private Address                local_addr;
     private RpcDispatcher          disp;
     static final String            groupname="uperf";
@@ -103,20 +105,22 @@ public class UPerf extends ReceiverAdapter {
 
 
     public void init(String props, String name, AddressGenerator generator, int bind_port) throws Throwable {
-        channel=new JChannel(props).addAddressGenerator(generator).setName(name);
+        mainChannel=new JChannel(props).addAddressGenerator(generator).setName(name);
+        channel = new ForkChannel(mainChannel, groupname + "-fork", groupname + "-fork");
         if(bind_port > 0) {
-            TP transport=channel.getProtocolStack().getTransport();
+            TP transport=mainChannel.getProtocolStack().getTransport();
             transport.setBindPort(bind_port);
         }
 
         disp=new RpcDispatcher(channel, this).setMembershipListener(this).setMethodLookup(id -> METHODS[id])
           .setMarshaller(new UPerfMarshaller());
+        mainChannel.connect(groupname);
         channel.connect(groupname);
         local_addr=channel.getAddress();
 
         try {
             MBeanServer server=Util.getMBeanServer();
-            JmxConfigurator.registerChannel(channel, server, "jgroups", channel.getClusterName(), true);
+            JmxConfigurator.registerChannel(mainChannel, server, "jgroups", mainChannel.getClusterName(), true);
         }
         catch(Throwable ex) {
             System.err.println("registering the channel in JMX failed: " + ex);
@@ -135,7 +139,7 @@ public class UPerf extends ReceiverAdapter {
     }
 
     void stop() {
-        Util.close(disp, channel);
+        Util.close(disp, channel, mainChannel);
     }
 
     protected void startEventThread() {
@@ -150,6 +154,7 @@ public class UPerf extends ReceiverAdapter {
         if(tmp != null)
             tmp.interrupt();
         Util.close(channel);
+        Util.close(mainChannel);
     }
 
     public void viewAccepted(View new_view) {
