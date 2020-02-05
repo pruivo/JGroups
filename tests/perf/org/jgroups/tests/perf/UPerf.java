@@ -4,10 +4,13 @@ import org.jgroups.*;
 import org.jgroups.annotations.Property;
 import org.jgroups.blocks.*;
 import org.jgroups.conf.ClassConfigurator;
+import org.jgroups.fork.ForkChannel;
 import org.jgroups.jmx.JmxConfigurator;
 import org.jgroups.protocols.TP;
 import org.jgroups.protocols.relay.RELAY2;
 import org.jgroups.stack.AddressGenerator;
+import org.jgroups.stack.Protocol;
+import org.jgroups.stack.ProtocolStack;
 import org.jgroups.util.*;
 
 import javax.management.MBeanServer;
@@ -102,16 +105,27 @@ public class UPerf implements Receiver {
     }
 
 
-    public void init(String props, String name, AddressGenerator generator, int bind_port) throws Throwable {
+    public void init(String props, String name, AddressGenerator generator, int bind_port, boolean useFork) throws Throwable {
         channel=new JChannel(props).addAddressGenerator(generator).setName(name);
         if(bind_port > 0) {
             TP transport=channel.getProtocolStack().getTransport();
             transport.setBindPort(bind_port);
         }
 
-        disp=new RpcDispatcher(channel, this).setReceiver(this).setMethodLookup(id -> METHODS[id])
+        JChannel channelToUse = channel;
+        if (useFork) {
+            //if we use ForkChannel, add the FORK protocol on top of the main protocol stack
+            Class<? extends Protocol> topProtocolClass = channelToUse.getProtocolStack().getTopProtocol().getClass();
+            channelToUse = new ForkChannel(channel, "fork-perf", "fork-perf-channel", true, ProtocolStack.Position.ABOVE, topProtocolClass);
+            System.out.println("Using ForkChannel!");
+        }
+
+        disp=new RpcDispatcher(channelToUse, this).setReceiver(this).setMethodLookup(id -> METHODS[id])
           .setMarshaller(new UPerfMarshaller());
         channel.connect(groupname);
+        if (useFork) {
+            channelToUse.connect(groupname);
+        }
         local_addr=channel.getAddress();
 
         try {
@@ -654,6 +668,7 @@ public class UPerf implements Receiver {
         boolean run_event_loop=true;
         AddressGenerator addr_generator=null;
         int port=0;
+        boolean useFork = false;
 
         for(int i=0; i < args.length; i++) {
             if("-props".equals(args[i])) {
@@ -676,6 +691,10 @@ public class UPerf implements Receiver {
                 port=Integer.valueOf(args[++i]);
                 continue;
             }
+            if("-fork".equals(args[i])) {
+                useFork = true;
+                continue;
+            }
             help();
             return;
         }
@@ -683,7 +702,7 @@ public class UPerf implements Receiver {
         UPerf test=null;
         try {
             test=new UPerf();
-            test.init(props, name, addr_generator, port);
+            test.init(props, name, addr_generator, port, useFork);
             if(run_event_loop)
                 test.startEventThread();
         }
@@ -695,7 +714,7 @@ public class UPerf implements Receiver {
     }
 
     static void help() {
-        System.out.println("UPerf [-props <props>] [-name name] [-nohup] [-uuid <UUID>] [-port <bind port>]");
+        System.out.println("UPerf [-props <props>] [-name name] [-nohup] [-uuid <UUID>] [-port <bind port>] [-fork]");
     }
 
 
