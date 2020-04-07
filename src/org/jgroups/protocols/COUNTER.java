@@ -1,15 +1,48 @@
 package org.jgroups.protocols;
 
-import org.jgroups.*;
-import org.jgroups.annotations.*;
+import java.io.ByteArrayInputStream;
+import java.io.DataInput;
+import java.io.DataInputStream;
+import java.io.DataOutput;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BiFunction;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+
+import org.jgroups.Address;
+import org.jgroups.Event;
+import org.jgroups.Header;
+import org.jgroups.Message;
+import org.jgroups.View;
+import org.jgroups.annotations.MBean;
+import org.jgroups.annotations.ManagedAttribute;
+import org.jgroups.annotations.ManagedOperation;
+import org.jgroups.annotations.Property;
 import org.jgroups.blocks.atomic.Counter;
 import org.jgroups.stack.Protocol;
-import org.jgroups.util.*;
-
-import java.io.*;
-import java.util.*;
-import java.util.concurrent.*;
-import java.util.function.Supplier;
+import org.jgroups.util.Bits;
+import org.jgroups.util.Buffer;
+import org.jgroups.util.ByteArrayDataOutputStream;
+import org.jgroups.util.CompletableFutures;
+import org.jgroups.util.Owner;
+import org.jgroups.util.ResponseCollector;
+import org.jgroups.util.SizeStreamable;
+import org.jgroups.util.Streamable;
+import org.jgroups.util.TimeScheduler;
+import org.jgroups.util.Tuple;
+import org.jgroups.util.Util;
 
 
 /**
@@ -19,6 +52,12 @@ import java.util.function.Supplier;
  */
 @MBean(description="Protocol to maintain distributed atomic counters")
 public class COUNTER extends Protocol {
+
+    private static final AtomicLong REQUEST_ID_GENERATOR = new AtomicLong();
+    //enum value() method is expensive since it creates a copy of the internal array every time it is invoked.
+    //we can cache it since we don't change it.
+    private static final RequestType[] REQUEST_TYPES_CACHED = RequestType.values();
+    private static final ResponseType[] RESPONSE_TYPES_CACHED = ResponseType.values();
 
     @Property(description="Bypasses message bundling if true")
     protected boolean bypass_bundling=true;
@@ -50,57 +89,90 @@ public class COUNTER extends Protocol {
     protected ReconciliationTask reconciliation_task;
 
     // server side counters
-    protected final ConcurrentMap<String,VersionedValue> counters=Util.createConcurrentMap(20);
+    protected final Map<String, VersionedValue> counters = Util.createConcurrentMap(20);
 
     // (client side) pending requests
-    protected final Map<Owner,Tuple<Request,Promise>> pending_requests=Util.createConcurrentMap(20);
+    protected final Map<Owner, Tuple<Request, CompletableFuture<ResponseData>>> pending_requests = Util.createConcurrentMap(20);
 
     protected static final byte REQUEST  = 1;
     protected static final byte RESPONSE = 2;
-    
+
 
     protected enum RequestType {
-        GET_OR_CREATE,
-        DELETE,
-        SET,
-        COMPARE_AND_SET,
-        ADD_AND_GET,
-        UPDATE,
-        RECONCILE,
-        RESEND_PENDING_REQUESTS
+        GET_OR_CREATE {
+            @Override
+            Request create() {
+                return new GetOrCreateRequest();
+            }
+        },
+        DELETE {
+            @Override
+            Request create() {
+                return new DeleteRequest();
+            }
+        },
+        SET {
+            @Override
+            Request create() {
+                return new SetRequest();
+            }
+        },
+        COMPARE_AND_SET {
+            @Override
+            Request create() {
+                return new CompareAndSetRequest();
+            }
+        },
+        ADD_AND_GET {
+            @Override
+            Request create() {
+                return new AddAndGetRequest();
+            }
+        },
+        UPDATE {
+            @Override
+            Request create() {
+                return new UpdateRequest();
+            }
+        },
+        RECONCILE {
+            @Override
+            Request create() {
+                return new ReconcileRequest();
+            }
+        },
+        RESEND_PENDING_REQUESTS {
+            @Override
+            Request create() {
+                return new ResendPendingRequests();
+            }
+        };
+
+        abstract Request create();
     }
 
     protected enum ResponseType {
-        VOID,
-        GET_OR_CREATE,
-        BOOLEAN,
-        VALUE,
-        EXCEPTION,
-        RECONCILE
-    }
+        VALUE {
+            @Override
+            Response create() {
+                return new ValueResponse();
+            }
+        },
+        EXCEPTION{
+            @Override
+            Response create() {
+                return new ExceptionResponse();
+            }
+        },
+        RECONCILE {
+            @Override
+            Response create() {
+                return new ReconcileResponse();
+            }
+        };
 
-    protected static RequestType requestToRequestType(Request req) {
-        if(req instanceof GetOrCreateRequest)    return RequestType.GET_OR_CREATE;
-        if(req instanceof DeleteRequest)         return RequestType.DELETE;
-        if(req instanceof AddAndGetRequest)      return RequestType.ADD_AND_GET;
-        if(req instanceof UpdateRequest)         return RequestType.UPDATE;
-        if(req instanceof SetRequest)            return RequestType.SET;
-        if(req instanceof CompareAndSetRequest)  return RequestType.COMPARE_AND_SET;
-        if(req instanceof ReconcileRequest)      return RequestType.RECONCILE;
-        if(req instanceof ResendPendingRequests) return RequestType.RESEND_PENDING_REQUESTS;
-        throw new IllegalStateException("request " + req + " cannot be mapped to request type");
+        abstract Response create();
     }
-
-    protected static ResponseType responseToResponseType(Response rsp) {
-        if(rsp instanceof GetOrCreateResponse) return ResponseType.GET_OR_CREATE;
-        if(rsp instanceof BooleanResponse) return ResponseType.BOOLEAN;
-        if(rsp instanceof ValueResponse) return ResponseType.VALUE;
-        if(rsp instanceof ExceptionResponse) return ResponseType.EXCEPTION;
-        if(rsp instanceof ReconcileResponse) return ResponseType.RECONCILE;
-        if(rsp != null) return ResponseType.VOID;
-        throw new IllegalStateException("response " + rsp + " cannot be mapped to response type");
-    }
-
 
     public boolean getBypassBundling() {
         return bypass_bundling;
@@ -132,19 +204,14 @@ public class COUNTER extends Protocol {
             throw new IllegalArgumentException("the channel needs to be connected before creating or getting a counter");
         Owner owner=getOwner();
         GetOrCreateRequest req=new GetOrCreateRequest(owner, name, initial_value);
-        Promise<long[]> promise=new Promise<>();
-        pending_requests.put(owner, new Tuple<>(req, promise));
+        CompletableFuture<ResponseData> cf = new CompletableFuture<>();
+        pending_requests.put(owner, new Tuple<>(req, cf));
         sendRequest(coord, req);
-        long[] result=new long[0];
         try {
-            result=promise.getResultWithTimeout(timeout);
-            long value=result[0], version=result[1];
-            if(!coord.equals(local_addr))
-                counters.put(name, new VersionedValue(value, version));
+            updateCounter(cf.join());
             return new CounterImpl(name);
-        }
-        catch(TimeoutException e) {
-            throw new RuntimeException(e);
+        } catch(CompletionException e) {
+            throw new RuntimeException(e.getCause());
         }
     }
 
@@ -156,8 +223,6 @@ public class COUNTER extends Protocol {
         if(!local_addr.equals(coord))
             counters.remove(name);
     }
-
-
 
     public Object down(Event evt) {
         switch(evt.getType()) {
@@ -172,10 +237,8 @@ public class COUNTER extends Protocol {
     }
 
     public Object up(Event evt) {
-        switch(evt.getType()) {
-            case Event.VIEW_CHANGE:
-                handleView(evt.getArg());
-                break;
+        if (evt.getType() == Event.VIEW_CHANGE) {
+            handleView(evt.getArg());
         }
         return up_prot.up(evt);
     }
@@ -206,126 +269,9 @@ public class COUNTER extends Protocol {
         return null;
     }
 
-    
+
     protected void handleRequest(Request req, Address sender) {
-        RequestType type=requestToRequestType(req);
-        switch(type) {
-            case GET_OR_CREATE:
-                if(!local_addr.equals(coord) || discard_requests)
-                    return;
-                GetOrCreateRequest tmp=(GetOrCreateRequest)req;
-                VersionedValue new_val=new VersionedValue(tmp.initial_value);
-                VersionedValue val=counters.putIfAbsent(tmp.name, new_val);
-                if(val == null)
-                    val=new_val;
-                Response rsp=new GetOrCreateResponse(tmp.owner, val.value, val.version);
-                sendResponse(sender,rsp);
-                if(backup_coords != null)
-                    updateBackups(tmp.name, val.value, val.version);
-                break;
-            case DELETE:
-                if(!local_addr.equals(coord) || discard_requests)
-                    return;
-                counters.remove(((SimpleRequest)req).name);
-                break;
-            case SET:
-                if(!local_addr.equals(coord) || discard_requests)
-                    return;
-                val=counters.get(((SimpleRequest)req).name);
-                if(val == null) {
-                    sendCounterNotFoundExceptionResponse(sender, ((SimpleRequest)req).owner, ((SimpleRequest)req).name);
-                    return;
-                }
-                long[] result=val.set(((SetRequest)req).value);
-                rsp=new ValueResponse(((SimpleRequest)req).owner, result[0], result[1]);
-                sendResponse(sender, rsp);
-                if(backup_coords != null)
-                    updateBackups(((SimpleRequest)req).name, result[0], result[1]);
-                break;
-            case COMPARE_AND_SET:
-                if(!local_addr.equals(coord) || discard_requests)
-                    return;
-                val=counters.get(((SimpleRequest)req).name);
-                if(val == null) {
-                    sendCounterNotFoundExceptionResponse(sender, ((SimpleRequest)req).owner, ((SimpleRequest)req).name);
-                    return;
-                }
-                result=val.compareAndSet(((CompareAndSetRequest)req).expected,((CompareAndSetRequest)req).update);
-                rsp=new ValueResponse(((SimpleRequest)req).owner, result == null? -1 : result[0], result == null? -1 : result[1]);
-                sendResponse(sender, rsp);
-                if(backup_coords != null) {
-                    VersionedValue value=counters.get(((SimpleRequest)req).name);
-                    updateBackups(((SimpleRequest)req).name, value.value, value.version);
-                }
-                break;
-            case ADD_AND_GET:
-                if(!local_addr.equals(coord) || discard_requests)
-                    return;
-                val=counters.get(((SimpleRequest)req).name);
-                if(val == null) {
-                    sendCounterNotFoundExceptionResponse(sender, ((SimpleRequest)req).owner, ((SimpleRequest)req).name);
-                    return;
-                }
-                result=val.addAndGet(((AddAndGetRequest)req).value);
-                rsp=new ValueResponse(((SimpleRequest)req).owner, result[0], result[1]);
-                sendResponse(sender, rsp);
-                if(backup_coords != null)
-                    updateBackups(((SimpleRequest)req).name, result[0], result[1]);
-                break;
-            case UPDATE:
-                String counter_name=((UpdateRequest)req).name;
-                long new_value=((UpdateRequest)req).value, new_version=((UpdateRequest)req).version;
-                VersionedValue current=counters.get(counter_name);
-                if(current == null)
-                    counters.put(counter_name, new VersionedValue(new_value, new_version));
-                else {
-                    current.updateIfBigger(new_value, new_version);
-                }
-                break;
-            case RECONCILE:
-                if(sender.equals(local_addr)) // we don't need to reply to our own reconciliation request
-                    break;
-
-                // return all values except those with lower or same versions than the ones in the ReconcileRequest
-                ReconcileRequest reconcile_req=(ReconcileRequest)req;
-                Map<String,VersionedValue> map=new HashMap<>(counters);
-                if(reconcile_req.names !=  null) {
-                    for(int i=0; i < reconcile_req.names.length; i++) {
-                        counter_name=reconcile_req.names[i];
-                        long version=reconcile_req.versions[i];
-                        VersionedValue my_value=map.get(counter_name);
-                        if(my_value != null && my_value.version <= version)
-                            map.remove(counter_name);
-                    }
-                }
-
-                int len=map.size();
-                String[] names=new String[len];
-                long[] values=new long[len];
-                long[] versions=new long[len];
-                int index=0;
-                for(Map.Entry<String,VersionedValue> entry: map.entrySet()) {
-                    names[index]=entry.getKey();
-                    values[index]=entry.getValue().value;
-                    versions[index]=entry.getValue().version;
-                    index++;
-                }
-
-                rsp=new ReconcileResponse(names, values, versions);
-                sendResponse(sender, rsp);
-                break;
-            case RESEND_PENDING_REQUESTS:
-                for(Tuple<Request,Promise> tuple: pending_requests.values()) {
-                    Request request=tuple.getVal1();
-                    if(log.isTraceEnabled())
-                        log.trace("[" + local_addr + "] --> [" + coord + "] resending " + request);
-                    sendRequest(coord, request);
-                }
-                break;
-
-            default:
-                break;
-        }
+        req.execute(this, sender);
     }
 
 
@@ -336,45 +282,27 @@ public class COUNTER extends Protocol {
         return val;
     }
 
-    @SuppressWarnings("unchecked")
     protected void handleResponse(Response rsp, Address sender) {
         if(rsp instanceof ReconcileResponse) {
-            if(log.isTraceEnabled() && ((ReconcileResponse)rsp).names != null && ((ReconcileResponse)rsp).names.length > 0)
-                log.trace("[" + local_addr + "] <-- [" + sender + "] RECONCILE-RSP: " +
-                            dump(((ReconcileResponse)rsp).names, ((ReconcileResponse)rsp).values, ((ReconcileResponse)rsp).versions));
-            if(reconciliation_task != null)
-                reconciliation_task.add((ReconcileResponse)rsp, sender);
+            handleReconcileResponse((ReconcileResponse) rsp, sender);
             return;
         }
 
-        Tuple<Request,Promise> tuple=pending_requests.remove(((SimpleResponse)rsp).owner);
+        Tuple<Request,CompletableFuture<ResponseData>> tuple=pending_requests.remove(rsp.getOwner());
         if(tuple == null) {
-            log.warn("response for " + ((SimpleResponse)rsp).owner + " didn't have an entry");
+            log.warn("response for " + rsp.getOwner() + " didn't have an entry");
             return;
         }
-        Promise promise=tuple.getVal2();
-        if(rsp instanceof ValueResponse) {
-            ValueResponse tmp=(ValueResponse)rsp;
-            if(tmp.result == -1 && tmp.version == -1)
-                promise.setResult(null);
-            else {
-                long[] result={tmp.result,tmp.version};
-                promise.setResult(result);
-            }
-        }
-        else if(rsp instanceof BooleanResponse)
-            promise.setResult(((BooleanResponse)rsp).result);
-        else if(rsp instanceof ExceptionResponse) {
-            promise.setResult(new Throwable(((ExceptionResponse)rsp).error_message));
-        }
-        else
-            promise.setResult(null);
+        rsp.complete(tuple.getVal1().getCounterName(), tuple.getVal2());
     }
 
+    private void handleReconcileResponse(ReconcileResponse rsp, Address sender) {
+        if(log.isTraceEnabled() && rsp.names != null && rsp.names.length > 0)
+            log.trace("[" + local_addr + "] <-- [" + sender + "] RECONCILE-RSP: " + dump(rsp.names, rsp.values, rsp.versions));
+        if(reconciliation_task != null)
+            reconciliation_task.add(rsp, sender);
 
-    
-
-
+    }
 
     @ManagedOperation(description="Dumps all counters")
     public String printCounters() {
@@ -387,9 +315,9 @@ public class COUNTER extends Protocol {
     @ManagedOperation(description="Dumps all pending requests")
     public String dumpPendingRequests() {
         StringBuilder sb=new StringBuilder();
-        for(Tuple<Request,Promise> tuple: pending_requests.values()) {
+        for(Tuple<Request,CompletableFuture<ResponseData>> tuple: pending_requests.values()) {
             Request tmp=tuple.getVal1();
-            sb.append(tmp + " (" + tmp.getClass().getCanonicalName() + ") ");
+            sb.append(tmp).append('(').append(tmp.getClass().getCanonicalName()).append(") ");
         }
         return sb.toString();
     }
@@ -427,20 +355,29 @@ public class COUNTER extends Protocol {
 
 
     protected Owner getOwner() {
-        return new Owner(local_addr, Thread.currentThread().getId());
+        return new Owner(local_addr, REQUEST_ID_GENERATOR.incrementAndGet());
     }
 
+    protected void updateBackups(String name, long[] versionedValue) {
+        if (backup_coords == null || backup_coords.isEmpty()) {
+            return;
+        }
+        Request req=new UpdateRequest(name, versionedValue[0], versionedValue[1]);
+        try {
+            Buffer buffer=requestToBuffer(req);
+            for(Address backup_coord: backup_coords)
+                send(backup_coord, buffer);
+        }
+        catch(Exception ex) {
+            log.error(Util.getMessage("FailedSending") + req + " to backup coordinator(s):" + ex);
+        }
+    }
 
     protected void sendRequest(Address dest, Request req) {
         try {
             Buffer buffer=requestToBuffer(req);
-            Message msg=new Message(dest, buffer).putHeader(id, new CounterHeader());
-            if(bypass_bundling)
-                msg.setFlag(Message.Flag.DONT_BUNDLE);
-            if(log.isTraceEnabled())
-                log.trace("[" + local_addr + "] --> [" + (dest == null? "ALL" : dest) + "] " + req);
-
-            down_prot.down(msg);
+            logSending(dest, req);
+            send(dest, buffer);
         }
         catch(Exception ex) {
             log.error(Util.getMessage("FailedSending") + req + " request: " + ex);
@@ -451,31 +388,11 @@ public class COUNTER extends Protocol {
     protected void sendResponse(Address dest, Response rsp) {
         try {
             Buffer buffer=responseToBuffer(rsp);
-            Message rsp_msg=new Message(dest, buffer).putHeader(id, new CounterHeader());
-            if(bypass_bundling)
-                rsp_msg.setFlag(Message.Flag.DONT_BUNDLE);
-
-            if(log.isTraceEnabled())
-                log.trace("[" + local_addr + "] --> [" + dest + "] " + rsp);
-
-            down_prot.down(rsp_msg);
+            logSending(dest, rsp);
+            send(dest, buffer);
         }
         catch(Exception ex) {
             log.error(Util.getMessage("FailedSending") + rsp + " message to " + dest + ": " + ex);
-        }
-    }
-
-    protected void updateBackups(String name, long value, long version) {
-        Request req=new UpdateRequest(name, value, version);
-        try {
-            Buffer buffer=requestToBuffer(req);
-            if(backup_coords != null && !backup_coords.isEmpty()) {
-                for(Address backup_coord: backup_coords)
-                    send(backup_coord, buffer);
-            }
-        }
-        catch(Exception ex) {
-            log.error(Util.getMessage("FailedSending") + req + " to backup coordinator(s):" + ex);
         }
     }
 
@@ -491,18 +408,30 @@ public class COUNTER extends Protocol {
         }
     }
 
+    private void logSending(Address dst, Object data) {
+        if(log.isTraceEnabled())
+            log.trace("[" + local_addr + "] --> [" + (dst == null? "ALL" : dst) + "]: " + data);
+    }
+
     protected void sendCounterNotFoundExceptionResponse(Address dest, Owner owner, String counter_name) {
         Response rsp=new ExceptionResponse(owner, "counter \"" + counter_name + "\" not found");
         sendResponse(dest, rsp);
     }
 
+    private long updateCounter(ResponseData responseData) {
+        if(!coord.equals(local_addr)) {
+            counters.compute(responseData.counterName, responseData);
+        }
+        return responseData.value;
+    }
+
 
     protected static Buffer requestToBuffer(Request req) throws Exception {
-        return streamableToBuffer(REQUEST,(byte)requestToRequestType(req).ordinal(), req);
+        return streamableToBuffer(REQUEST,(byte)req.getRequestType().ordinal(), req);
     }
 
     protected static Buffer responseToBuffer(Response rsp) throws Exception {
-        return streamableToBuffer(RESPONSE,(byte)responseToResponseType(rsp).ordinal(), rsp);
+        return streamableToBuffer(RESPONSE,(byte)rsp.getResponseType().ordinal(), rsp);
     }
 
     protected static Buffer streamableToBuffer(byte req_or_rsp, byte type, Streamable obj) throws Exception {
@@ -525,48 +454,20 @@ public class COUNTER extends Protocol {
         }
     }
 
-    protected static final Request requestFromBuffer(byte[] buf, int offset, int length) throws Exception {
+    protected static Request requestFromBuffer(byte[] buf, int offset, int length) throws Exception {
         ByteArrayInputStream input=new ByteArrayInputStream(buf, offset, length);
         DataInputStream in=new DataInputStream(input);
-        RequestType type=RequestType.values()[in.readByte()];
-        Request retval=createRequest(type);
+        Request retval=REQUEST_TYPES_CACHED[in.readByte()].create();
         retval.readFrom(in);
         return retval;
     }
 
-    protected static Request createRequest(RequestType type) {
-        switch(type) {
-            case COMPARE_AND_SET:         return new CompareAndSetRequest();
-            case ADD_AND_GET:             return new AddAndGetRequest();
-            case UPDATE:                  return new UpdateRequest();
-            case GET_OR_CREATE:           return new GetOrCreateRequest();
-            case DELETE:                  return new DeleteRequest();
-            case SET:                     return new SetRequest();
-            case RECONCILE:               return new ReconcileRequest();
-            case RESEND_PENDING_REQUESTS: return new ResendPendingRequests();
-            default:                      throw new IllegalArgumentException("failed creating a request from " + type);
-        }
-    }
-
-    protected static final Response responseFromBuffer(byte[] buf, int offset, int length) throws Exception {
+    protected static Response responseFromBuffer(byte[] buf, int offset, int length) throws Exception {
         ByteArrayInputStream input=new ByteArrayInputStream(buf, offset, length);
         DataInputStream in=new DataInputStream(input);
-        ResponseType type=ResponseType.values()[in.readByte()];
-        Response retval=createResponse(type);
+        Response retval=RESPONSE_TYPES_CACHED[in.readByte()].create();
         retval.readFrom(in);
         return retval;
-    }
-
-    protected static Response createResponse(ResponseType type) {
-        switch(type) {
-            case VOID:          return new SimpleResponse();
-            case GET_OR_CREATE: return new GetOrCreateResponse();
-            case BOOLEAN:       return new BooleanResponse();
-            case VALUE:         return new ValueResponse();
-            case EXCEPTION:     return new ExceptionResponse();
-            case RECONCILE:     return new ReconcileResponse();
-            default:            throw new IllegalArgumentException("failed creating a response from " + type);
-        }
     }
 
 
@@ -577,14 +478,15 @@ public class COUNTER extends Protocol {
         }
     }
 
-    protected synchronized void stopReconciliationTask() {
-        if(reconciliation_task_future != null) {
-            reconciliation_task_future.cancel(true);
-            if(reconciliation_task != null)
-                reconciliation_task.cancel();
-            reconciliation_task_future=null;
-        }
-    }
+    //TODO! not used? can be removed?
+//    protected synchronized void stopReconciliationTask() {
+//        if(reconciliation_task_future != null) {
+//            reconciliation_task_future.cancel(true);
+//            if(reconciliation_task != null)
+//                reconciliation_task.cancel();
+//            reconciliation_task_future=null;
+//        }
+//    }
 
 
     protected static void writeReconciliation(DataOutput out, String[] names, long[] values, long[] versions) throws IOException {
@@ -638,109 +540,47 @@ public class COUNTER extends Protocol {
         }
 
         @Override
-        public long get() {
-            return addAndGet(0);
+        public CompletableFuture<Long> getAsync() {
+            return addAndGetAsync(0);
         }
 
         @Override
-        public void set(long new_value) {
+        public CompletableFuture<Void> setAsync(long new_value) {
             if(local_addr.equals(coord)) {
                 VersionedValue val=getCounter(name);
-                val.set(new_value);
-                if(backup_coords != null)
-                    updateBackups(name, val.value, val.version);
-                return;
+                long[] result = val.set(new_value);
+                updateBackups(name, result);
+                return CompletableFutures.completedNull();
             }
             Owner owner=getOwner();
             Request req=new SetRequest(owner, name, new_value);
-            Promise<long[]> promise=new Promise<>();
-            pending_requests.put(owner, new Tuple<>(req, promise));
-            sendRequest(coord, req);
-            Object obj=null;
-            try {
-                obj=promise.getResultWithTimeout(timeout);
-                if(obj instanceof Throwable)
-                    throw new IllegalStateException((Throwable)obj);
-                long[] result=(long[])obj;
-                long value=result[0], version=result[1];
-                if(!coord.equals(local_addr))
-                    counters.put(name, new VersionedValue(value, version));
-            }
-            catch(TimeoutException e) {
-                throw new RuntimeException(e);
-            }
+            return sendRequestToCoordinator(owner, req).thenAccept(CompletableFutures.voidConsumer());
         }
 
         @Override
-        public boolean compareAndSet(long expect, long update) {
+        public CompletableFuture<Long> compareAndSwapAsync(long expect, long update) {
             if(local_addr.equals(coord)) {
                 VersionedValue val=getCounter(name);
-                boolean retval=val.compareAndSet(expect, update) != null;
-                if(backup_coords != null)
-                    updateBackups(name, val.value, val.version);
-                return retval;
+                long retval=val.compareAndSwap(expect, update)[0];
+                updateBackups(name, val.snapshot());
+                return CompletableFuture.completedFuture(retval);
             }
             Owner owner=getOwner();
             Request req=new CompareAndSetRequest(owner, name, expect, update);
-            Promise<long[]> promise=new Promise<>();
-            pending_requests.put(owner, new Tuple<>(req, promise));
-            sendRequest(coord, req);
-            Object obj=null;
-            try {
-                obj=promise.getResultWithTimeout(timeout);
-                if(obj instanceof Throwable)
-                    throw new IllegalStateException((Throwable)obj);
-                if(obj == null)
-                    return false;
-                long[] result=(long[])obj;
-                long value=result[0], version=result[1];
-                if(!coord.equals(local_addr))
-                    counters.put(name, new VersionedValue(value, version));
-                return true;
-            }
-            catch(TimeoutException e) {
-                throw new RuntimeException(e);
-            }
+            return sendRequestToCoordinator(owner, req);
         }
 
         @Override
-        public long incrementAndGet() {
-            return addAndGet(1);
-        }
-
-        @Override
-        public long decrementAndGet() {
-            return addAndGet(-1);
-        }
-
-        @Override
-        public long addAndGet(long delta) {
+        public CompletableFuture<Long> addAndGetAsync(long delta) {
             if(local_addr.equals(coord)) {
                 VersionedValue val=getCounter(name);
-                long retval=val.addAndGet(delta)[0];
-                if(backup_coords != null)
-                    updateBackups(name, val.value, val.version);
-                return retval;
+                long[] result=val.addAndGet(delta);
+                updateBackups(name, result);
+                return CompletableFuture.completedFuture(result[0]);
             }
             Owner owner=getOwner();
             Request req=new AddAndGetRequest(owner, name, delta);
-            Promise<long[]> promise=new Promise<>();
-            pending_requests.put(owner, new Tuple<>(req, promise));
-            sendRequest(coord, req);
-            Object obj=null;
-            try {
-                obj=promise.getResultWithTimeout(timeout);
-                if(obj instanceof Throwable)
-                    throw new IllegalStateException((Throwable)obj);
-                long[] result=(long[])obj;
-                long value=result[0], version=result[1];
-                if(!coord.equals(local_addr))
-                    counters.put(name, new VersionedValue(value, version));
-                return value;
-            }
-            catch(TimeoutException e) {
-                throw new RuntimeException(e);
-            }
+            return sendRequestToCoordinator(owner, req);
         }
 
         @Override
@@ -750,15 +590,59 @@ public class COUNTER extends Protocol {
         }
     }
 
+    private CompletableFuture<Long> sendRequestToCoordinator(Owner owner, Request request) {
+        CompletableFuture<ResponseData> cf = new CompletableFuture<>();
+        pending_requests.put(owner, new Tuple<>(request, cf));
+        sendRequest(coord, request);
+        TimeBasedCompletableFuture<ResponseData> tcf = new TimeBasedCompletableFuture<>(cf);
+        TP tp = getTransport();
+        tcf.scheduleTimeout(tp.getTimer(), timeout);
+        return cf.thenApplyAsync(this::updateCounter, tp.getThreadPool());
+    }
 
+    private static class TimeBasedCompletableFuture<T> implements Runnable, Consumer<T> {
 
+        private final CompletableFuture<T> completableFuture;
+        private volatile Future<?> timeoutFuture;
+
+        private TimeBasedCompletableFuture(CompletableFuture<T> completableFuture) {
+            this.completableFuture = Objects.requireNonNull(completableFuture);
+            this.timeoutFuture = CompletableFutures.nullFuture();
+        }
+
+        @Override
+        public void run() {
+            //on timeout, do:
+            completableFuture.completeExceptionally(new TimeoutException());
+        }
+
+        @Override
+        public void accept(T t) {
+            //when completable future successful completed, do:
+            timeoutFuture.cancel(true);
+        }
+
+        void scheduleTimeout(TimeScheduler scheduler, long timeout) {
+            timeoutFuture = scheduler.schedule(this, timeout, TimeUnit.MILLISECONDS);
+            completableFuture.thenAccept(this);
+        }
+    }
+
+    private boolean skipRequest() {
+        return !local_addr.equals(coord) || discard_requests;
+    }
 
     protected interface Request extends Streamable {
 
+        String getCounterName();
+
+        RequestType getRequestType();
+
+        void execute(COUNTER protocol, Address sender);
     }
 
 
-    protected static class SimpleRequest implements Request {
+    protected abstract static class SimpleRequest implements Request {
         protected Owner   owner;
         protected String  name;
 
@@ -787,6 +671,11 @@ public class COUNTER extends Protocol {
         public String toString() {
             return owner + " [" + name + "]";
         }
+
+        @Override
+        public String getCounterName() {
+            return name;
+        }
     }
 
     protected static class ResendPendingRequests implements Request {
@@ -795,6 +684,30 @@ public class COUNTER extends Protocol {
         @Override
         public void readFrom(DataInput in) throws IOException {}
         public String toString() {return "ResendPendingRequests";}
+
+        @Override
+        public String getCounterName() {
+            return null;
+        }
+
+        @Override
+        public RequestType getRequestType() {
+            return RequestType.RESEND_PENDING_REQUESTS;
+        }
+
+        @Override
+        public void execute(COUNTER protocol, Address sender) {
+            for(Tuple<Request,CompletableFuture<ResponseData>> tuple: protocol.pending_requests.values()) {
+                Request request=tuple.getVal1();
+                protocol.traceResending(request);
+                protocol.sendRequest(protocol.coord, request);
+            }
+        }
+    }
+
+    private void traceResending(Request request) {
+        if(log.isTraceEnabled())
+            log.trace("[" + local_addr + "] --> [" + coord + "] resending " + request);
     }
 
     protected static class GetOrCreateRequest extends SimpleRequest {
@@ -818,6 +731,24 @@ public class COUNTER extends Protocol {
             super.writeTo(out);
             Bits.writeLong(initial_value, out);
         }
+
+        @Override
+        public RequestType getRequestType() {
+            return RequestType.GET_OR_CREATE;
+        }
+
+        public void execute(COUNTER protocol, Address sender) {
+            if(protocol.skipRequest())
+                return;
+            VersionedValue new_val=new VersionedValue(initial_value);
+            VersionedValue val=protocol.counters.putIfAbsent(name, new_val);
+            if(val == null)
+                val=new_val;
+            long[] result = val.snapshot();
+            Response rsp=new ValueResponse(owner, result);
+            protocol.sendResponse(sender,rsp);
+            protocol.updateBackups(name, result);
+        }
     }
 
 
@@ -830,6 +761,18 @@ public class COUNTER extends Protocol {
         }
 
         public String toString() {return "DeleteRequest: " + super.toString();}
+
+        @Override
+        public RequestType getRequestType() {
+            return RequestType.DELETE;
+        }
+
+        @Override
+        public void execute(COUNTER protocol, Address sender) {
+            if(protocol.skipRequest())
+                return;
+            protocol.counters.remove(name);
+        }
     }
 
 
@@ -841,6 +784,26 @@ public class COUNTER extends Protocol {
         }
 
         public String toString() {return "AddAndGetRequest: " + super.toString();}
+
+        @Override
+        public RequestType getRequestType() {
+            return RequestType.ADD_AND_GET;
+        }
+
+        @Override
+        public void execute(COUNTER protocol, Address sender) {
+            if(protocol.skipRequest())
+                return;
+            VersionedValue val=protocol.counters.get(name);
+            if(val == null) {
+                protocol.sendCounterNotFoundExceptionResponse(sender, owner, name);
+                return;
+            }
+            long[] result=val.addAndGet(value);
+            Response rsp=new ValueResponse(owner, result);
+            protocol.sendResponse(sender, rsp);
+            protocol.updateBackups(name, result);
+        }
     }
 
 
@@ -868,6 +831,26 @@ public class COUNTER extends Protocol {
         }
 
         public String toString() {return super.toString() + ": " + value;}
+
+        @Override
+        public RequestType getRequestType() {
+            return RequestType.SET;
+        }
+
+        @Override
+        public void execute(COUNTER protocol, Address sender) {
+            if(protocol.skipRequest())
+                return;
+            VersionedValue val=protocol.counters.get(name);
+            if(val == null) {
+                protocol.sendCounterNotFoundExceptionResponse(sender, owner, name);
+                return;
+            }
+            long[] result=val.set(value);
+            Response rsp=new ValueResponse(owner, result);
+            protocol.sendResponse(sender, rsp);
+            protocol.updateBackups(name, result);
+        }
     }
 
 
@@ -897,6 +880,26 @@ public class COUNTER extends Protocol {
         }
 
         public String toString() {return super.toString() + ", expected=" + expected + ", update=" + update;}
+
+        @Override
+        public RequestType getRequestType() {
+            return RequestType.COMPARE_AND_SET;
+        }
+
+        @Override
+        public void execute(COUNTER protocol, Address sender) {
+            if(protocol.skipRequest())
+                return;
+            VersionedValue val=protocol.counters.get(name);
+            if(val == null) {
+                protocol.sendCounterNotFoundExceptionResponse(sender, owner, name);
+                return;
+            }
+            long[] result=val.compareAndSwap(expected, update);
+            Response rsp=new ValueResponse(owner, result);
+            protocol.sendResponse(sender, rsp);
+            protocol.updateBackups(name, val.snapshot());
+        }
     }
 
 
@@ -927,10 +930,53 @@ public class COUNTER extends Protocol {
         }
 
         public String toString() {return "ReconcileRequest (" + names.length + ") entries";}
+
+        @Override
+        public String getCounterName() {
+            return null;
+        }
+
+        @Override
+        public RequestType getRequestType() {
+            return RequestType.RECONCILE;
+        }
+
+        @Override
+        public void execute(COUNTER protocol, Address sender) {
+            if(sender.equals(protocol.local_addr)) // we don't need to reply to our own reconciliation request
+                return;
+
+            // return all values except those with lower or same versions than the ones in the ReconcileRequest
+            Map<String,VersionedValue> map=new HashMap<>(protocol.counters);
+            if(names !=  null) {
+                for(int i=0; i < names.length; i++) {
+                    String counter_name=names[i];
+                    long version=versions[i];
+                    VersionedValue my_value=map.get(counter_name);
+                    if(my_value != null && my_value.version <= version)
+                        map.remove(counter_name);
+                }
+            }
+
+            int len=map.size();
+            String[] names=new String[len];
+            long[] values=new long[len];
+            long[] versions=new long[len];
+            int index=0;
+            for(Map.Entry<String,VersionedValue> entry: map.entrySet()) {
+                names[index]=entry.getKey();
+                values[index]=entry.getValue().value;
+                versions[index]=entry.getValue().version;
+                index++;
+            }
+
+            Response rsp=new ReconcileResponse(names, values, versions);
+            protocol.sendResponse(sender, rsp);
+        }
     }
 
 
-    protected static class UpdateRequest implements Request {
+    protected static class UpdateRequest implements Request, BiFunction<String, VersionedValue, VersionedValue> {
         protected String name;
         protected long   value;
         protected long   version;
@@ -958,111 +1004,115 @@ public class COUNTER extends Protocol {
         }
 
         public String toString() {return "UpdateRequest(" + name + ": "+ value + " (" + version + ")";}
-    }
 
-
-
-    protected interface Response extends Streamable {}
-
-    
-    /** Response without data */
-    protected static class SimpleResponse implements Response {
-        protected Owner owner;
-        protected long  version;
-
-        protected SimpleResponse() {}
-
-        protected SimpleResponse(Owner owner, long version) {
-            this.owner=owner;
-            this.version=version;
+        @Override
+        public String getCounterName() {
+            return name;
         }
 
         @Override
-        public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
-            owner=new Owner();
-            owner.readFrom(in);
-            version=Bits.readLong(in);
+        public RequestType getRequestType() {
+            return RequestType.UPDATE;
+        }
+
+        @Override
+        public void execute(COUNTER protocol, Address sender) {
+            protocol.counters.compute(name, this);
+        }
+
+        @Override
+        public VersionedValue apply(String name, VersionedValue versionedValue) {
+            if (versionedValue == null) {
+                versionedValue = new VersionedValue(value, version);
+            } else {
+                versionedValue.updateIfBigger(value, version);
+            }
+            return versionedValue;
+        }
+    }
+
+    private static abstract class Response implements Streamable {
+
+        private Owner owner;
+
+        Response() {}
+
+        Response(Owner owner) {
+            this.owner = owner;
+        }
+
+        abstract ResponseType getResponseType();
+
+        abstract void complete(String counterName, CompletableFuture<ResponseData> cf);
+
+        final Owner getOwner() {
+            return owner;
         }
 
         @Override
         public void writeTo(DataOutput out) throws IOException {
             owner.writeTo(out);
-            Bits.writeLong(version, out);
-        }
-
-        public String toString() {return "Response";}
-    }
-
-
-    protected static class BooleanResponse extends SimpleResponse {
-        protected boolean result;
-
-        protected BooleanResponse() {}
-
-        protected BooleanResponse(Owner owner, long version, boolean result) {
-            super(owner, version);
-            this.result=result;
         }
 
         @Override
         public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
-            super.readFrom(in);
-            result=in.readBoolean();
+            owner = new Owner();
+            owner.readFrom(in);
         }
-
-        @Override
-        public void writeTo(DataOutput out) throws IOException {
-            super.writeTo(out);
-            out.writeBoolean(result);
-        }
-
-        public String toString() {return "BooleanResponse(" + result + ")";}
     }
 
-    protected static class ValueResponse extends SimpleResponse {
+
+    protected static class ValueResponse extends Response {
         protected long result;
+        protected long version;
 
         protected ValueResponse() {}
 
+        ValueResponse(Owner owner, long[] versionedValue) {
+            this(owner, versionedValue[0], versionedValue[1]);
+        }
+
         protected ValueResponse(Owner owner, long result, long version) {
-            super(owner, version);
+            super(owner);
             this.result=result;
+            this.version=version;
         }
 
         @Override
         public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
             super.readFrom(in);
             result=Bits.readLong(in);
+            version=Bits.readLong(in);
         }
 
         @Override
         public void writeTo(DataOutput out) throws IOException {
             super.writeTo(out);
             Bits.writeLong(result, out);
+            Bits.writeLong(version, out);
         }
 
         public String toString() {return "ValueResponse(" + result + ")";}
-    }
 
-
-    protected static class GetOrCreateResponse extends ValueResponse {
-
-        protected GetOrCreateResponse() {}
-
-        protected GetOrCreateResponse(Owner owner, long result, long version) {
-            super(owner,result, version);
+        @Override
+        public ResponseType getResponseType() {
+            return ResponseType.VALUE;
         }
 
-        public String toString() {return "GetOrCreateResponse(" + result + ")";}
+        @Override
+        void complete(String counterName, CompletableFuture<ResponseData> cf) {
+            cf.complete(new ResponseData(counterName, result, version));
+        }
     }
 
-    protected static class ExceptionResponse extends SimpleResponse {
+
+    protected static class ExceptionResponse extends Response {
         protected String error_message;
 
         protected ExceptionResponse() {}
 
         protected ExceptionResponse(Owner owner, String error_message) {
-            super(owner, 0);
+            super(owner);
             this.error_message=error_message;
         }
 
@@ -1079,11 +1129,19 @@ public class COUNTER extends Protocol {
         }
 
         public String toString() {return "ExceptionResponse: " + super.toString();}
+
+        @Override
+        public ResponseType getResponseType() {
+            return ResponseType.EXCEPTION;
+        }
+
+        @Override
+        void complete(String counterName, CompletableFuture<ResponseData> cf) {
+            cf.completeExceptionally(new Throwable(error_message));
+        }
     }
 
-
-    
-    protected static class ReconcileResponse implements Response {
+    protected static class ReconcileResponse extends Response {
         protected String[] names;
         protected long[]   values;
         protected long[]   versions;
@@ -1112,6 +1170,16 @@ public class COUNTER extends Protocol {
         public String toString() {
             int num=names != null? names.length : 0;
             return "ReconcileResponse (" + num + ") entries";
+        }
+
+        @Override
+        public ResponseType getResponseType() {
+            return ResponseType.RECONCILE;
+        }
+
+        @Override
+        void complete(String counterName, CompletableFuture<ResponseData> cf) {
+            //no-op
         }
     }
     
@@ -1151,10 +1219,13 @@ public class COUNTER extends Protocol {
             return new long[]{this.value=value,++version};
         }
 
-        protected synchronized long[] compareAndSet(long expected, long update) {
-            if(value == expected)
-                return new long[]{value=update, ++version};
-            return null;
+        protected synchronized long[] compareAndSwap(long expected, long update) {
+            long oldValue = value;
+            if(oldValue == expected) {
+                value = update;
+                ++version;
+            }
+            return new long[]{oldValue, version};
         }
 
         /** Sets the value only if the version argument is greater than the own version */
@@ -1163,6 +1234,10 @@ public class COUNTER extends Protocol {
                 this.version=version;
                 this.value=value;
             }
+        }
+
+        synchronized long[] snapshot() {
+            return new long[] {value, version};
         }
 
         public String toString() {return value + " (version=" + version + ")";}
@@ -1220,7 +1295,7 @@ public class COUNTER extends Protocol {
                             counters.put(counter_name, new VersionedValue(value, version));
                             continue;
                         }
-                            
+
                         if(my_value.version < version)
                             my_value.updateIfBigger(value, version);
                     }
@@ -1244,4 +1319,28 @@ public class COUNTER extends Protocol {
         }
     }
 
+    private static class ResponseData implements BiFunction<String, VersionedValue, VersionedValue> {
+        private final String counterName;
+        private final long value;
+        private final long version;
+
+        private ResponseData(String counterName, long value, long version) {
+            this.counterName = counterName;
+            this.value = value;
+            this.version = version;
+        }
+
+        /**
+         * Updates the VersionedValue if the version is bigger.
+         */
+        @Override
+        public VersionedValue apply(String s, VersionedValue versionedValue) {
+            if (versionedValue == null) {
+                versionedValue = new VersionedValue(value, version);
+            } else {
+                versionedValue.updateIfBigger(value, version);
+            }
+            return versionedValue;
+        }
+    }
 }
