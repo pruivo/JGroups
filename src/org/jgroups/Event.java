@@ -65,6 +65,8 @@ public class Event {
     public static final int SET_SECRET_KEY                     = 112; // arg = Tuple<SecretKey,byte[]> // PK+version
     public static final int UNLOCK_FORCE                       = 113; // arg = lock name
     public static final int INSTALL_MERGE_VIEW                 = 114; // arg = MergeView
+    public static final int NO_CREDITS                         = 115; // arg = Message
+    public static final int CREDITS_AVAILABLE                  = 116; // arg = Address
 
     public static final int USER_DEFINED                       = 1000; // arg = <user def., e.g. evt type + data>
 
