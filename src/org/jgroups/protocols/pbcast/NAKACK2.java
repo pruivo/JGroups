@@ -899,14 +899,21 @@ public class NAKACK2 extends Protocol implements DiagnosticsHandler.ProbeHandler
         if(added && oob) {
             Address dest=mb.dest();
             MessageBatch oob_batch=loopback? new MessageBatch(dest, sender, null, dest == null, OOB, size) : mb;
+            //MessageBatch oob_batch;
             if(loopback) {
+                //oob_batch = new MessageBatch(dest, sender, null, dest == null, OOB, size);
                 for(Message m: mb) {
                     long seq=SEQNO_GETTER.apply(m);
                     Message msg=buf.get(seq); // we *have* to get the message, because loopback means we didn't add it to win !
                     if(msg != null && msg.isFlagSet(Message.Flag.OOB) && msg.setFlagIfAbsent(OOB_DELIVERED))
                         oob_batch.add(msg);
                 }
-            }
+            }/* else {
+                oob_batch = new MessageBatch(dest, sender, mb.clusterName(), mb.isMulticast(), mb.mode(), size);
+                for (Iterator<Message> it = mb.iteratorWithFilter(HAS_HEADER); it.hasNext(); ) {
+                    oob_batch.add(it.next());
+                }
+            }*/
             deliverBatch(oob_batch);
         }
         removeAndDeliver(buf, sender, loopback, mb.clusterName()); // at most 1 thread will execute this at any given time

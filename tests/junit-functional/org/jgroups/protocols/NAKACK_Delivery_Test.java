@@ -13,6 +13,8 @@ import org.testng.annotations.Test;
 import java.util.*;
 import java.util.concurrent.*;
 
+import static org.testng.AssertJUnit.*;
+
 /**
  * Tests whether a mix of OOB and regular messages (with duplicates), sent my multiple threads, are delivered
  * correctly. Correct delivery means:
@@ -136,6 +138,51 @@ public class NAKACK_Delivery_Test {
 
         assert c1_list.size() == NUM_MSGS : "[A] expected " + NUM_MSGS + " messages, but got " + c1_list.size();
         assert c2_list.size() == NUM_MSGS : "[B] expected " + NUM_MSGS + " messages, but got " + c2_list.size();
+    }
+
+    public void testBatchDeliveredWithTrace() {
+        doBatchDeliverTest(true);
+    }
+
+    public void testBatchDeliveredWithoutTrace() {
+        doBatchDeliverTest(false);
+    }
+
+    /**
+     * Test for <a href="https://issues.redhat.com/browse/JGRP-2619">JGRP-2619</a>
+     */
+    private void doBatchDeliverTest(boolean trace) {
+        try {
+            nak.isTrace(trace);
+
+            // batch: first message without header, last message with header
+            receiver.getMsgs().get(b).clear();
+            assertEquals(0, receiver.getMsgs().get(b).size());
+
+            MessageBatch batch = new MessageBatch(2).setMode(MessageBatch.Mode.OOB).setSender(b).setDest(null);
+            batch.add(new EmptyMessage().setFlag(Message.Flag.NO_RELIABILITY, Message.Flag.OOB).src(b)); // no NAKAKC2 header
+            batch.add(msg(b,1, 1, true));
+            nak.up(batch);
+
+            // expect both messages delivered
+            System.out.println(receiver.getMsgs().get(b));
+            assertEquals(2, receiver.getMsgs().get(b).size());
+
+            // new batch, first message with header, last message without header
+            receiver.getMsgs().get(b).clear();
+            assertEquals(0, receiver.getMsgs().get(b).size());
+
+            batch = new MessageBatch(2).setMode(MessageBatch.Mode.OOB).setSender(b).setDest(null);
+            batch.add(msg(b,2, 1, true));
+            batch.add(new EmptyMessage().setFlag(Message.Flag.NO_RELIABILITY, Message.Flag.OOB).src(b)); // no NAKAKC2 header
+            nak.up(batch);
+
+            // expect both messages delivered
+            System.out.println(receiver.getMsgs().get(b));
+            assertEquals(2, receiver.getMsgs().get(b).size());
+        } finally {
+            nak.isTrace(false);
+        }
     }
 
     private static List<Integer> generateRandomNumbers(int from, int to) {
