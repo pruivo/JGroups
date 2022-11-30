@@ -8,10 +8,10 @@ import java.util.concurrent.atomic.AtomicLongFieldUpdater;
  * @author Pedro Ruivo
  * @since 12.0
  */
-public class PNCounterData {
+public class PNCounterState {
 
-    private static final AtomicLongFieldUpdater<PNCounterData> P_UPDATER = AtomicLongFieldUpdater.newUpdater(PNCounterData.class, "pCounter");
-    private static final AtomicLongFieldUpdater<PNCounterData> N_UPDATER = AtomicLongFieldUpdater.newUpdater(PNCounterData.class, "nCounter");
+    private static final AtomicLongFieldUpdater<PNCounterState> P_UPDATER = AtomicLongFieldUpdater.newUpdater(PNCounterState.class, "pCounter");
+    private static final AtomicLongFieldUpdater<PNCounterState> N_UPDATER = AtomicLongFieldUpdater.newUpdater(PNCounterState.class, "nCounter");
 
     volatile long pCounter;
     volatile long nCounter;
@@ -20,7 +20,7 @@ public class PNCounterData {
         return pCounter - nCounter;
     }
 
-    public PNCounterSnapshot add(long value) {
+    public PNCounterStateSnapshot add(long value) {
         if (value >= 0) {
             P_UPDATER.addAndGet(this, value);
         } else {
@@ -29,12 +29,12 @@ public class PNCounterData {
         return snapshot();
     }
 
-    public void update(PNCounterSnapshot snapshot) {
+    public void update(PNCounterStateSnapshot snapshot) {
         P_UPDATER.accumulateAndGet(this, snapshot.getPositiveCounter(), Long::max);
         N_UPDATER.accumulateAndGet(this, snapshot.getNegativeCounter(), Long::max);
     }
 
-    public PNCounterSnapshot snapshot() {
-        return new PNCounterSnapshot(pCounter, nCounter);
+    public PNCounterStateSnapshot snapshot() {
+        return new PNCounterStateSnapshot(pCounter, nCounter);
     }
 }

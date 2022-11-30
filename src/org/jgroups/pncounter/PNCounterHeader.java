@@ -17,13 +17,27 @@ import java.util.function.Supplier;
  */
 public class PNCounterHeader extends Header {
 
+    public static final byte STATE = 0;
+    public static final byte UPDATE = 1;
+    public static final byte ACK = 2;
+
+    private byte type;
     private long reqId;
     private String counterName;
 
-    PNCounterHeader() {
+    private PNCounterHeader() {
     }
 
-    public PNCounterHeader(long reqId, String counterName) {
+    public static PNCounterHeader stateHeader(String counterName) {
+        return new PNCounterHeader(STATE, 0, counterName);
+    }
+
+    public static PNCounterHeader updateHeader(long reqId, String counterName) {
+        return new PNCounterHeader(UPDATE, reqId, counterName);
+    }
+
+    private PNCounterHeader(byte type, long reqId, String counterName) {
+        this.type = type;
         this.reqId = reqId;
         this.counterName = counterName;
     }
@@ -34,6 +48,10 @@ public class PNCounterHeader extends Header {
 
     public String getCounterName() {
         return counterName;
+    }
+
+    public byte getType() {
+        return type;
     }
 
     @Override
@@ -48,22 +66,33 @@ public class PNCounterHeader extends Header {
 
     @Override
     public int serializedSize() {
-        return Bits.size(reqId) + Bits.sizeUTF(counterName);
+        return Global.BYTE_SIZE + Bits.size(reqId) + Bits.sizeUTF(counterName);
     }
 
     @Override
     public void writeTo(DataOutput out) throws IOException {
+        out.writeByte(type);
         Bits.writeLongCompressed(reqId, out);
         out.writeUTF(counterName);
     }
 
     @Override
-    public void readFrom(DataInput in) throws IOException, ClassNotFoundException {
+    public void readFrom(DataInput in) throws IOException {
+        this.type = in.readByte();
         this.reqId = Bits.readLongCompressed(in);
         this.counterName = in.readUTF();
     }
 
     public PNCounterHeader ack() {
-        return new PNCounterHeader(reqId, null);
+        return new PNCounterHeader(ACK, reqId, null);
+    }
+
+    @Override
+    public String toString() {
+        return "PNCounterHeader{" +
+                "type=" + type +
+                ", reqId=" + reqId +
+                ", counterName='" + counterName + '\'' +
+                '}';
     }
 }

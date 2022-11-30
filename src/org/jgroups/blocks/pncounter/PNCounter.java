@@ -1,4 +1,4 @@
-package org.jgroups.blocks.atomic;
+package org.jgroups.blocks.pncounter;
 
 import java.util.concurrent.CompletionStage;
 

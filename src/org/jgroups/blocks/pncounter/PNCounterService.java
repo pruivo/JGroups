@@ -1,4 +1,4 @@
-package org.jgroups.blocks.atomic;
+package org.jgroups.blocks.pncounter;
 
 import org.jgroups.JChannel;
 import org.jgroups.protocols.PN_COUNTER;
