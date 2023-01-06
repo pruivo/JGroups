@@ -7,25 +7,47 @@ import org.jgroups.Version;
 import org.jgroups.annotations.Component;
 import org.jgroups.annotations.ManagedAttribute;
 import org.jgroups.annotations.ManagedOperation;
-import org.jgroups.blocks.cs.*;
+import org.jgroups.blocks.cs.BaseServer;
+import org.jgroups.blocks.cs.Connection;
+import org.jgroups.blocks.cs.ConnectionListener;
+import org.jgroups.blocks.cs.NioServer;
+import org.jgroups.blocks.cs.ReceiverAdapter;
+import org.jgroups.blocks.cs.TcpServer;
 import org.jgroups.conf.AttributeType;
+import org.jgroups.gossiprouter.GossipRouterGroup;
 import org.jgroups.jmx.JmxConfigurator;
 import org.jgroups.jmx.ReflectUtils;
 import org.jgroups.logging.Log;
 import org.jgroups.logging.LogFactory;
-import org.jgroups.protocols.PingData;
-import org.jgroups.util.*;
+import org.jgroups.util.Bits;
+import org.jgroups.util.ByteArrayDataInputStream;
+import org.jgroups.util.ByteArrayDataOutputStream;
+import org.jgroups.util.DefaultSocketFactory;
+import org.jgroups.util.DefaultThreadFactory;
+import org.jgroups.util.SocketFactory;
+import org.jgroups.util.SslContextFactory;
+import org.jgroups.util.StackType;
+import org.jgroups.util.ThreadFactory;
+import org.jgroups.util.Util;
 
-import javax.net.ssl.*;
+import javax.net.ssl.SNIHostName;
+import javax.net.ssl.SNIMatcher;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
+import javax.net.ssl.SSLServerSocket;
 import java.io.DataInput;
 import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
+import java.util.Timer;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
@@ -106,7 +128,7 @@ public class GossipRouter extends ReceiverAdapter implements ConnectionListener,
     protected DiagnosticsHandler   diag;
 
     // mapping between groups and <member address> - <physical addr / logical name> pairs
-    protected final Map<String,ConcurrentMap<Address,Entry>> address_mappings=new ConcurrentHashMap<>();
+    protected final Map<String, GossipRouterGroup> address_mappings=new ConcurrentHashMap<>();
 
     // to cache output streams for serialization (https://issues.redhat.com/browse/JGRP-2576)
     protected final Map<Address,ByteArrayDataOutputStream>   output_streams=new ConcurrentHashMap<>();
@@ -176,7 +198,7 @@ public class GossipRouter extends ReceiverAdapter implements ConnectionListener,
 
     @ManagedAttribute(description="The number of registered client (all clusters)")
     public int numRegisteredClients() {
-        return (int)address_mappings.values().stream().mapToLong(s -> s.keySet().size()).sum();
+        return address_mappings.values().stream().mapToInt(GossipRouterGroup::numberOfMembers).sum();
     }
 
 
@@ -216,6 +238,7 @@ public class GossipRouter extends ReceiverAdapter implements ConnectionListener,
         server.start();
         server.addConnectionListener(this);
         Runtime.getRuntime().addShutdownHook(new Thread(GossipRouter.this::stop));
+        printStartupInfo();
         return this;
     }
 
@@ -247,20 +270,7 @@ public class GossipRouter extends ReceiverAdapter implements ConnectionListener,
     @ManagedOperation(description="Dumps the address mappings")
     public String dumpAddressMappings() {
         StringBuilder sb=new StringBuilder();
-        for(Map.Entry<String,ConcurrentMap<Address,Entry>> entry: address_mappings.entrySet()) {
-            String group=entry.getKey();
-            Map<Address,Entry> val=entry.getValue();
-            if(val == null)
-                continue;
-            sb.append(group).append(":\n");
-            for(Map.Entry<Address,Entry> entry2: val.entrySet()) {
-                Address logical_addr=entry2.getKey();
-                Entry val2=entry2.getValue();
-                if(val2 == null)
-                    continue;
-                sb.append(String.format("  %s: %s (client_addr: %s, uuid:%s)\n", val2.logical_name, val2.phys_addr, val2.client_addr, logical_addr));
-            }
-        }
+        address_mappings.values().forEach(g -> g.dumpMappings(sb));
         return sb.toString();
     }
 
@@ -328,7 +338,6 @@ public class GossipRouter extends ReceiverAdapter implements ConnectionListener,
     public void receive(Address sender, DataInput in) throws Exception {
         GossipType type=GossipType.values()[in.readByte()];
 
-        GossipData request=null;
         switch(type) {
             case REGISTER:
                 handleRegister(sender, in);
@@ -338,6 +347,7 @@ public class GossipRouter extends ReceiverAdapter implements ConnectionListener,
                 try {
                     // inefficient: we should transfer bytes from input stream to output stream, but that is not
                     // available natively
+                    GossipData request;
                     if((request=readRequest(in, type)) != null) {
                         ByteArrayDataOutputStream out=getOutputStream(request.sender, request.serializedSize());
                         out.position(0);
@@ -354,7 +364,6 @@ public class GossipRouter extends ReceiverAdapter implements ConnectionListener,
                 break;
 
             case HEARTBEAT:
-                request=readRequest(in, type);
                 handleHeartbeat(sender);
                 break;
 
@@ -441,10 +450,6 @@ public class GossipRouter extends ReceiverAdapter implements ConnectionListener,
             PhysicalAddress phys_addr=req.getPhysicalAddress();
             String          logical_name=req.getLogicalName();
             addAddressMapping(sender, group, addr, phys_addr, logical_name);
-            if(log.isDebugEnabled())
-                log.debug("added %s (%s) to group %s", logical_name, phys_addr, group);
-            if(dump_msgs == DumpMessages.REGISTRATION || dump_msgs == DumpMessages.ALL)
-                System.out.printf("added %s (%s) to group %s\n", logical_name, phys_addr, group);
         }
     }
 
@@ -459,15 +464,9 @@ public class GossipRouter extends ReceiverAdapter implements ConnectionListener,
         if(req == null)
             return;
         GossipData rsp=new GossipData(GossipType.GET_MBRS_RSP, req.getGroup(), null);
-        Map<Address,Entry> members=address_mappings.get(req.getGroup());
-        if(members != null) {
-            for(Map.Entry<Address,Entry> entry : members.entrySet()) {
-                Address logical_addr=entry.getKey();
-                PhysicalAddress phys_addr=entry.getValue().phys_addr;
-                String logical_name=entry.getValue().logical_name;
-                PingData data=new PingData(logical_addr, true, logical_name, phys_addr);
-                rsp.addPingData(data);
-            }
+        GossipRouterGroup group=address_mappings.get(req.getGroup());
+        if(group != null) {
+            rsp.setPingData(group.createPingData());
         }
 
         if(dump_msgs == DumpMessages.ALL || log.isDebugEnabled()) {
@@ -506,18 +505,6 @@ public class GossipRouter extends ReceiverAdapter implements ConnectionListener,
         log.debug("connection to %s established", conn.peerAddress());
     }
 
-    protected GossipData readRequest(DataInput in) {
-        GossipData data=new GossipData();
-        try {
-            data.readFrom(in);
-            return data;
-        }
-        catch(Exception ex) {
-            log.error(Util.getMessage("FailedReadingRequest"), ex);
-            return null;
-        }
-    }
-
     protected GossipData readRequest(DataInput in, GossipType type) {
         GossipData data=new GossipData(type);
         try {
@@ -530,207 +517,44 @@ public class GossipRouter extends ReceiverAdapter implements ConnectionListener,
         }
     }
 
-
     protected void addAddressMapping(Address sender, String group, Address addr, PhysicalAddress phys_addr, String logical_name) {
-        ConcurrentMap<Address,Entry> m=address_mappings.get(group);
-        if(m == null) {
-            ConcurrentMap<Address,Entry> existing=this.address_mappings.putIfAbsent(group, m=new ConcurrentHashMap<>());
-            if(existing != null)
-                m=existing;
-        }
-        m.put(addr, new Entry(sender, phys_addr, logical_name));
+        address_mappings.computeIfAbsent(group, this::createGroup)
+                .registerMember(addr, sender, phys_addr, logical_name);
     }
 
     protected void removeAddressMapping(String group, Address addr) {
-        Map<Address,Entry> m=address_mappings.get(group);
-        if(m == null)
-            return;
-        Entry e=m.get(addr);
-        if(e != null) {
-            if(log.isDebugEnabled())
-                log.debug("removed %s (%s) from group %s", e.logical_name, e.phys_addr, group);
-            if(dump_msgs == DumpMessages.REGISTRATION || dump_msgs == DumpMessages.ALL)
-                System.out.printf("removed %s (%s) from group %s\n", e.logical_name, e.phys_addr, group);
-        }
-        if(m.remove(addr) != null && m.isEmpty())
-            address_mappings.remove(group);
+        address_mappings.computeIfPresent(group, (groupName, grGroup) -> grGroup.unregisterMember(addr) ? null : grGroup);
         output_streams.remove(addr);
     }
 
 
     protected void removeFromAddressMappings(Address client_addr) {
         if(client_addr == null) return;
-        Set<Tuple<String,Address>> suspects=null; // group/address pairs
-        for(Map.Entry<String,ConcurrentMap<Address,Entry>> entry: address_mappings.entrySet()) {
-            ConcurrentMap<Address,Entry> map=entry.getValue();
-            for(Map.Entry<Address,Entry> entry2: map.entrySet()) {
-                Entry e=entry2.getValue();
-                if(client_addr.equals(e.client_addr)) {
-                    map.remove(entry2.getKey());
-                    output_streams.remove(entry2.getKey());
-                    log.debug("connection to %s closed", client_addr);
-                    if(log.isDebugEnabled())
-                        log.debug("removed %s (%s) from group %s", e.logical_name, e.phys_addr, entry.getKey());
-                    if(dump_msgs == DumpMessages.REGISTRATION || dump_msgs == DumpMessages.ALL)
-                        System.out.printf("removed %s (%s) from group %s\n", e.logical_name, e.phys_addr, entry.getKey());
-                    if(map.isEmpty())
-                        address_mappings.remove(entry.getKey());
-                    if(suspects == null) suspects=new HashSet<>();
-                    suspects.add(new Tuple<>(entry.getKey(), entry2.getKey()));
-                    break;
-                }
-            }
-        }
-        if(emit_suspect_events && suspects != null && !suspects.isEmpty()) {
-           for(Tuple<String,Address> suspect: suspects) {
-               String group=suspect.getVal1();
-               Address addr=suspect.getVal2();
-               ConcurrentMap<Address,Entry> map=address_mappings.get(group);
-               if(map == null)
-                   continue;
-               GossipData data=new GossipData(GossipType.SUSPECT, group, addr);
-               sendToAllMembersInGroup(map.entrySet(), data);
-           }
-        }
+        address_mappings.entrySet().removeIf(entry -> entry.getValue().onDisconnect(client_addr, output_streams::remove, emit_suspect_events));
     }
 
 
     protected void route(String group, Address dest, byte[] msg, int offset, int length) {
-        ConcurrentMap<Address,Entry> map=address_mappings.get(group);
+        GossipRouterGroup map=address_mappings.get(group);
         if(map == null)
             return;
         if(dest != null) { // unicast
-            Entry entry=map.get(dest);
-            if(entry != null)
-                sendToMember(entry.client_addr, msg, offset, length);
-            else
-                log.warn("dest %s in cluster %s not found", dest, group);
-        }
-        else {             // multicast - send to all members in group
-            Set<Map.Entry<Address,Entry>> dests=map.entrySet();
-            sendToAllMembersInGroup(dests, msg, offset, length);
+            map.sendUnicast(dest, msg, offset, length);
+        } else {             // multicast - send to all members in group
+            map.sendMulticast(msg, offset, length);
         }
     }
 
     protected void route(String group, Address dest, ByteBuffer buf) {
-        ConcurrentMap<Address,Entry> map=address_mappings.get(group);
+        GossipRouterGroup map=address_mappings.get(group);
         if(map == null)
             return;
         if(dest != null) { // unicast
-            Entry entry=map.get(dest);
-            if(entry != null)
-                sendToMember(entry.client_addr, buf);
-            else
-                log.warn("dest %s in cluster %s not found", dest, group);
-        }
-        else {             // multicast - send to all members in group
-            Set<Map.Entry<Address,Entry>> dests=map.entrySet();
-            sendToAllMembersInGroup(dests, buf);
+            map.sendUnicast(dest, buf);
+        } else {             // multicast - send to all members in group
+            map.sendMulticast(buf);
         }
     }
-
-
-
-    protected void sendToAllMembersInGroup(Set<Map.Entry<Address,Entry>> dests, GossipData request) {
-        ByteArrayDataOutputStream out=new ByteArrayDataOutputStream(request.serializedSize());
-        try {
-            request.writeTo(out);
-        }
-        catch(Exception ex) {
-            log.error("failed marshalling gossip data %s: %s; dropping request", request, ex);
-            return;
-        }
-
-        for(Map.Entry<Address,Entry> entry: dests) {
-            Entry e=entry.getValue();
-            if(e == null /* || e.phys_addr == null */)
-                continue;
-
-            try {
-                server.send(e.client_addr, out.buffer(), 0, out.position());
-            }
-            catch(Exception ex) {
-                log.error("failed sending message to %s (%s): %s", e.logical_name, e.phys_addr, ex);
-            }
-        }
-    }
-
-
-    protected void sendToAllMembersInGroup(Set<Map.Entry<Address,Entry>> dests, byte[] buf, int offset, int len) {
-        for(Map.Entry<Address,Entry> entry: dests) {
-            Entry e=entry.getValue();
-            if(e == null /* || e.phys_addr == null */)
-                continue;
-
-            try {
-                server.send(e.client_addr, buf, offset, len);
-            }
-            catch(Exception ex) {
-                log.error("failed sending message to %s (%s): %s", e.logical_name, e.phys_addr, ex);
-            }
-        }
-    }
-
-    protected void sendToAllMembersInGroup(Set<Map.Entry<Address,Entry>> dests, ByteBuffer buf) {
-        for(Map.Entry<Address,Entry> entry: dests) {
-            Entry e=entry.getValue();
-            if(e == null /* || e.phys_addr == null */)
-                continue;
-
-            try {
-                server.send(e.client_addr, buf.duplicate());
-            }
-            catch(Exception ex) {
-                log.error("failed sending message to %s (%s): %s", e.logical_name, e.phys_addr, ex);
-            }
-        }
-    }
-
-
-    protected void sendToMember(Address dest, GossipData request) {
-        ByteArrayDataOutputStream out=new ByteArrayDataOutputStream(request.serializedSize());
-        try {
-            request.writeTo(out);
-            server.send(dest, out.buffer(), 0, out.position());
-        }
-        catch(Exception ex) {
-            log.error("failed sending unicast message to %s: %s", dest, ex);
-        }
-    }
-
-    protected void sendToMember(Address dest, ByteBuffer buf) {
-        try {
-            server.send(dest, buf);
-        }
-        catch(Exception ex) {
-            log.error("failed sending unicast message to %s: %s", dest, ex);
-        }
-    }
-
-    protected void sendToMember(Address dest, byte[] buf, int offset, int len) {
-        try {
-            server.send(dest, buf, offset, len);
-        }
-        catch(Exception ex) {
-            log.error("failed sending unicast message to %s: %s", dest, ex);
-        }
-    }
-
-
-    protected static class Entry {
-        protected final PhysicalAddress phys_addr;
-        protected final String          logical_name;
-        protected final Address         client_addr; // address of the client which registered an item
-
-        public Entry(Address client_addr, PhysicalAddress phys_addr, String logical_name) {
-            this.phys_addr=phys_addr;
-            this.logical_name=logical_name;
-            this.client_addr=client_addr;
-        }
-
-        public String toString() {return String.format("client=%s, name=%s, addr=%s", client_addr, logical_name, phys_addr);}
-    }
-
 
 
     /**
@@ -747,9 +571,13 @@ public class GossipRouter extends ReceiverAdapter implements ConnectionListener,
         System.out.println(", and read timeout is " + sock_read_timeout);
     }
 
+    private GossipRouterGroup createGroup(String groupName) {
+        return new GossipRouterGroup(groupName, server, printRegistrationMessages());
+    }
 
-
-
+    private boolean printRegistrationMessages() {
+        return dump_msgs == DumpMessages.REGISTRATION || dump_msgs == DumpMessages.ALL;
+    }
     public static void main(String[] args) throws Exception {
         int                    port=12001;
         int                    backlog=0, recv_buf_size=0, max_length=0;
