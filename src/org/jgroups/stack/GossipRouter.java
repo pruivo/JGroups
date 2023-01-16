@@ -15,6 +15,9 @@ import org.jgroups.blocks.cs.ReceiverAdapter;
 import org.jgroups.blocks.cs.TcpServer;
 import org.jgroups.conf.AttributeType;
 import org.jgroups.gossiprouter.GossipRouterGroup;
+import org.jgroups.gossiprouter.metrics.GossipRouterMetrics;
+import org.jgroups.gossiprouter.metrics.NoOpGossipRouterMetrics;
+import org.jgroups.gossiprouter.metrics.jmx.JmxGossipRouterMetrics;
 import org.jgroups.jmx.JmxConfigurator;
 import org.jgroups.jmx.ReflectUtils;
 import org.jgroups.logging.Log;
@@ -36,6 +39,7 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLServerSocket;
 import java.io.DataInput;
+import java.lang.invoke.MethodHandles;
 import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
@@ -43,8 +47,10 @@ import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.ServiceLoader;
 import java.util.Timer;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
@@ -122,7 +128,7 @@ public class GossipRouter extends ReceiverAdapter implements ConnectionListener,
     protected BaseServer           server;
     protected final AtomicBoolean  running=new AtomicBoolean(false);
     protected Timer                timer;
-    protected final Log            log=LogFactory.getLog(this.getClass());
+    protected static final Log     log=LogFactory.getLog(MethodHandles.lookup().lookupClass());
 
     @Component
     protected DiagnosticsHandler   diag;
@@ -136,9 +142,12 @@ public class GossipRouter extends ReceiverAdapter implements ConnectionListener,
     protected static final BiConsumer<Short,Message> MSG_CONSUMER=(version,msg)
       -> System.out.printf("dst=%s src=%s (%d bytes): hdrs= %s\n", msg.dest(), msg.src(), msg.getLength(), msg.printHeaders());
 
+    private final GossipRouterMetrics metrics;
 
-    public GossipRouter(String bind_addr, int local_port) {
+
+    public GossipRouter(String bind_addr, int local_port, GossipRouterMetrics metrics) {
         this.port=local_port;
+        this.metrics = metrics;
         try {
             this.bind_addr=bind_addr != null? InetAddress.getByName(bind_addr) : null;
             init();
@@ -148,9 +157,10 @@ public class GossipRouter extends ReceiverAdapter implements ConnectionListener,
         }
     }
 
-    public GossipRouter(InetAddress bind_addr, int local_port) {
+    public GossipRouter(InetAddress bind_addr, int local_port, GossipRouterMetrics metrics) {
         this.port=local_port;
         this.bind_addr=bind_addr;
+        this.metrics = metrics;
         init();
     }
 
@@ -304,7 +314,7 @@ public class GossipRouter extends ReceiverAdapter implements ConnectionListener,
                     in=new ByteArrayDataInputStream(buf);
                     String group=Bits.readString(in);
                     Address dest=Util.readAddress(in);
-                    route(group, dest, buf.position(original_pos));
+                    route(sender, group, dest, buf.position(original_pos));
 
                     if(dump_msgs == DumpMessages.ALL) {
                         ByteArrayDataInputStream input=new ByteArrayDataInputStream(buf);
@@ -352,7 +362,7 @@ public class GossipRouter extends ReceiverAdapter implements ConnectionListener,
                         ByteArrayDataOutputStream out=getOutputStream(request.sender, request.serializedSize());
                         out.position(0);
                         request.writeTo(out);
-                        route(request.group, request.addr, out.buffer(), 0, out.position());
+                        route(sender, request.group, request.addr, out.buffer(), 0, out.position());
                         if(dump_msgs == DumpMessages.ALL)
                             dump(request);
                     }
@@ -533,26 +543,29 @@ public class GossipRouter extends ReceiverAdapter implements ConnectionListener,
         address_mappings.entrySet().removeIf(entry -> entry.getValue().onDisconnect(client_addr, output_streams::remove, emit_suspect_events));
     }
 
-
-    protected void route(String group, Address dest, byte[] msg, int offset, int length) {
-        GossipRouterGroup map=address_mappings.get(group);
-        if(map == null)
+    protected void route(Address src, String group, Address dest, byte[] msg, int offset, int length) {
+        GossipRouterGroup map = address_mappings.get(group);
+        if (map == null)
             return;
-        if(dest != null) { // unicast
-            map.sendUnicast(dest, msg, offset, length);
-        } else {             // multicast - send to all members in group
-            map.sendMulticast(msg, offset, length);
+        if (dest != null) {
+            // unicast
+            map.sendUnicast(src, dest, msg, offset, length);
+        } else {
+            // multicast - send to all members in group
+            map.sendMulticast(src, msg, offset, length);
         }
     }
 
-    protected void route(String group, Address dest, ByteBuffer buf) {
-        GossipRouterGroup map=address_mappings.get(group);
-        if(map == null)
+    protected void route(Address src, String group, Address dest, ByteBuffer buf) {
+        GossipRouterGroup map = address_mappings.get(group);
+        if (map == null)
             return;
-        if(dest != null) { // unicast
-            map.sendUnicast(dest, buf);
-        } else {             // multicast - send to all members in group
-            map.sendMulticast(buf);
+        if (dest != null) {
+            // unicast
+            map.sendUnicast(src, dest, buf);
+        } else {
+            // multicast - send to all members in group
+            map.sendMulticast(src, buf);
         }
     }
 
@@ -572,12 +585,25 @@ public class GossipRouter extends ReceiverAdapter implements ConnectionListener,
     }
 
     private GossipRouterGroup createGroup(String groupName) {
-        return new GossipRouterGroup(groupName, server, printRegistrationMessages());
+        return new GossipRouterGroup(groupName, server, printRegistrationMessages(), metrics);
     }
 
     private boolean printRegistrationMessages() {
         return dump_msgs == DumpMessages.REGISTRATION || dump_msgs == DumpMessages.ALL;
     }
+
+    private static GossipRouterMetrics findMetricsImpl(boolean fallbackToJmx) {
+        Iterator<GossipRouterMetrics> it = ServiceLoader.load(GossipRouterMetrics.class).iterator();
+        if (it.hasNext()) {
+            GossipRouterMetrics impl = it.next();
+            if (it.hasNext()) {
+                log.warn("Multiple implementation of %s found. Using %s", GossipRouterMetrics.class, impl.getClass());
+            }
+            return impl;
+        }
+        return fallbackToJmx ? new JmxGossipRouterMetrics() : NoOpGossipRouterMetrics.INSTANCE;
+    }
+
     public static void main(String[] args) throws Exception {
         int                    port=12001;
         int                    backlog=0, recv_buf_size=0, max_length=0;
@@ -767,7 +793,7 @@ public class GossipRouter extends ReceiverAdapter implements ConnectionListener,
             // Doesn't work yet
             throw new IllegalArgumentException("Cannot use NIO with TLS");
 
-        router=new GossipRouter(bind_addr, port)
+        router=new GossipRouter(bind_addr, port, findMetricsImpl(jmx))
           .jmx(jmx).expiryTime(expiry_time)
           .useNio(nio)
           .backlog(backlog)

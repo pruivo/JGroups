@@ -3,6 +3,8 @@ package org.jgroups.gossiprouter;
 import org.jgroups.Address;
 import org.jgroups.PhysicalAddress;
 import org.jgroups.blocks.cs.BaseServer;
+import org.jgroups.gossiprouter.metrics.GossipRouterGroupMetrics;
+import org.jgroups.gossiprouter.metrics.GossipRouterMetrics;
 import org.jgroups.logging.Log;
 import org.jgroups.logging.LogFactory;
 import org.jgroups.protocols.PingData;
@@ -33,11 +35,14 @@ public class GossipRouterGroup {
     private final BaseServer server;
     private final boolean printRegistrationToStdOut;
     private final ConcurrentHashMap<Address, GossipRouterMember> members = new ConcurrentHashMap<>(16);
+    private final GossipRouterGroupMetrics metrics;
 
-    public GossipRouterGroup(String name, BaseServer server, boolean printRegistrationToStdOut) {
+    public GossipRouterGroup(String name, BaseServer server, boolean printRegistrationToStdOut, GossipRouterMetrics metrics) {
         this.name = name;
         this.server = server;
         this.printRegistrationToStdOut = printRegistrationToStdOut;
+        this.metrics = metrics.createGroupMetrics(name);
+        this.metrics.setGroupSize(members::size);
     }
 
     private static PingData createPingData(Map.Entry<Address, GossipRouterMember> entry) {
@@ -47,14 +52,17 @@ public class GossipRouterGroup {
 
 
     public void registerMember(Address logicalAddress, Address clientAddress, PhysicalAddress physicalAddress, String logicalName) {
-        GossipRouterMember m = new GossipRouterMember(clientAddress, physicalAddress, logicalName);
+        metrics.incrementRegisterEvents();
+        GossipRouterMember m = GossipRouterMember.create(logicalAddress, clientAddress, physicalAddress, logicalName, metrics);
         members.put(logicalAddress, m);
         logRegistered(m);
     }
 
     public boolean unregisterMember(Address logicalAddress) {
+        metrics.incrementUnregisterEvents();
         GossipRouterMember m = members.remove(logicalAddress);
         if (m != null) {
+            m.onUnregister();
             logUnregistered(m);
         }
         return isEmpty();
@@ -68,6 +76,7 @@ public class GossipRouterGroup {
             if (!m.getClientAddress().equals(clientAddress)) {
                 continue;
             }
+            m.onDisconnect();
             iterator.remove();
             log.debug("connection to %s closed", clientAddress);
             logUnregistered(m);
@@ -108,6 +117,7 @@ public class GossipRouterGroup {
     }
 
     private void sendSuspect(Address suspect) {
+        metrics.incrementSuspectEvents();
         GossipData data = new GossipData(GossipType.SUSPECT, name, suspect);
         ByteArrayDataOutputStream out = new ByteArrayDataOutputStream(data.serializedSize());
         try {
@@ -116,37 +126,65 @@ public class GossipRouterGroup {
             log.error("failed marshalling gossip data %s: %s; dropping request", data, ex);
             return;
         }
-        sendMulticast(out.buffer(), 0, out.position());
+        sendMulticast(null, out.buffer(), 0, out.position());
     }
 
-    public void sendUnicast(Address logicalAddress, byte[] data, int offset, int length) {
-        GossipRouterMember member = members.get(logicalAddress);
+    public void sendUnicast(Address src, Address dest, byte[] data, int offset, int length) {
+        recordUnicastReceived(src, length);
+        GossipRouterMember member = members.get(dest);
         if (member == null) {
-            log.warn("dest %s in cluster %s not found", logicalAddress, name);
+            log.warn("dest %s in cluster %s not found", src, name);
             return;
         }
+        member.onUnicastMessageSent(length);
         sendToMember(member, data, offset, length);
     }
 
-    public void sendUnicast(Address logicalAddress, ByteBuffer buffer) {
-        GossipRouterMember member = members.get(logicalAddress);
+    public void sendUnicast(Address src, Address dst, ByteBuffer buffer) {
+        int length = buffer.remaining();
+        recordUnicastReceived(src, length);
+        GossipRouterMember member = members.get(dst);
         if (member == null) {
-            log.warn("dest %s in cluster %s not found", logicalAddress, name);
+            log.warn("dest %s in cluster %s not found", dst, name);
             return;
         }
+        member.onUnicastMessageSent(length);
         sendToMember(member, buffer);
     }
 
-    public void sendMulticast(byte[] data, int offset, int length) {
+    public void sendMulticast(Address src, byte[] data, int offset, int length) {
+        recordUnicastReceived(src, length);
         for (GossipRouterMember member : members.values()) {
+            member.onMulticastMessageSent(length);
             sendToMember(member, data, offset, length);
         }
     }
 
-    public void sendMulticast(ByteBuffer buffer) {
+    public void sendMulticast(Address src, ByteBuffer buffer) {
+        int length = buffer.remaining();
+        recordMulticastReceived(src, length);
         for (GossipRouterMember member : members.values()) {
+            member.onMulticastMessageSent(length);
             sendToMember(member, buffer.duplicate());
         }
+    }
+
+    private void recordUnicastReceived(Address src, int length) {
+        GossipRouterMember sender = getSender(src);
+        if (sender != null) {
+            sender.onUnicastMessageReceived(length);
+        }
+    }
+
+    private void recordMulticastReceived(Address src, int length) {
+        GossipRouterMember sender = getSender(src);
+        if (sender != null) {
+            sender.onMulticastMessageReceived(length);
+        }
+    }
+
+    private GossipRouterMember getSender(Address src) {
+        return src == null ? null : members.get(src);
     }
 
     private void logRegistered(GossipRouterMember m) {

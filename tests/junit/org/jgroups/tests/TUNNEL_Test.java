@@ -2,6 +2,7 @@ package org.jgroups.tests;
 
 
 import org.jgroups.*;
+import org.jgroups.gossiprouter.metrics.NoOpGossipRouterMetrics;
 import org.jgroups.protocols.*;
 import org.jgroups.protocols.pbcast.GMS;
 import org.jgroups.protocols.pbcast.NAKACK2;
@@ -42,7 +43,7 @@ public class TUNNEL_Test extends ChannelTestBase {
         gossip_router_bind_addr=Util.getLoopback();
         gossip_router_port=ResourceManager.getNextTcpPort(gossip_router_bind_addr);
         gossip_router_hosts=gossip_router_bind_addr.getHostAddress() + "[" + gossip_router_port + "]";
-        gossipRouter=new GossipRouter(gossip_router_bind_addr, gossip_router_port);
+        gossipRouter=new GossipRouter(gossip_router_bind_addr, gossip_router_port, NoOpGossipRouterMetrics.INSTANCE);
         gossipRouter.start();
     }
     

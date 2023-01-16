@@ -2,6 +2,7 @@ package org.jgroups.tests;
 
 import org.jgroups.Address;
 import org.jgroups.Global;
+import org.jgroups.gossiprouter.metrics.NoOpGossipRouterMetrics;
 import org.jgroups.logging.Log;
 import org.jgroups.logging.LogFactory;
 import org.jgroups.stack.GossipRouter;
@@ -48,8 +49,8 @@ public class RouterStubTest {
     @BeforeClass
     protected void setUp() throws Exception {
         List<Integer> gossip_router_ports=ResourceManager.getNextTcpPorts(BIND_ADDR, 2);
-        router_a=new GossipRouter(BIND_ADDR, gossip_router_ports.get(0));
-        router_b=new GossipRouter(BIND_ADDR, gossip_router_ports.get(1));
+        router_a=new GossipRouter(BIND_ADDR, gossip_router_ports.get(0), NoOpGossipRouterMetrics.INSTANCE);
+        router_b=new GossipRouter(BIND_ADDR, gossip_router_ports.get(1), NoOpGossipRouterMetrics.INSTANCE);
     }
 
     @BeforeMethod protected void start() throws Exception {

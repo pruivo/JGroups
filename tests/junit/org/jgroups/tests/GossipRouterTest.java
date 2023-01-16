@@ -2,6 +2,7 @@ package org.jgroups.tests;
 
 import org.jgroups.Global;
 import org.jgroups.JChannel;
+import org.jgroups.gossiprouter.metrics.NoOpGossipRouterMetrics;
 import org.jgroups.protocols.*;
 import org.jgroups.protocols.pbcast.GMS;
 import org.jgroups.protocols.pbcast.NAKACK2;
@@ -54,7 +55,7 @@ public class GossipRouterTest {
         a=createTunnelChannel("A").connect("demo");
         b=createTunnelChannel("B").connect("demo");
         System.out.println("-- starting GossipRouter");
-        router=new GossipRouter(bind_addr_str, gossip_router_port).useNio(false);
+        router=new GossipRouter(bind_addr_str, gossip_router_port, NoOpGossipRouterMetrics.INSTANCE).useNio(false);
         router.start();
         System.out.println("-- waiting for merge to happen --");
         Util.waitUntil(20000, 1000, () -> Stream.of(a, b).allMatch(c -> c.getView().size() == 2));

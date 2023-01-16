@@ -3,6 +3,7 @@ package org.jgroups.tests;
 import org.jgroups.Global;
 import org.jgroups.JChannel;
 import org.jgroups.View;
+import org.jgroups.gossiprouter.metrics.NoOpGossipRouterMetrics;
 import org.jgroups.protocols.*;
 import org.jgroups.protocols.pbcast.GMS;
 import org.jgroups.protocols.pbcast.NAKACK2;
@@ -39,7 +40,7 @@ public class TCPGOSSIP_Test {
     void startRouter() throws Exception {
         bind_addr=Util.getLoopback();
         gossip_router_port=ResourceManager.getNextTcpPort(bind_addr);
-        gossipRouter=new GossipRouter(bind_addr, gossip_router_port);
+        gossipRouter=new GossipRouter(bind_addr, gossip_router_port, NoOpGossipRouterMetrics.INSTANCE);
         gossipRouter.start();
     }
 

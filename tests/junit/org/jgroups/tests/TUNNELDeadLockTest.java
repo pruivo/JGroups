@@ -1,6 +1,7 @@
 package org.jgroups.tests;
 
 import org.jgroups.*;
+import org.jgroups.gossiprouter.metrics.NoOpGossipRouterMetrics;
 import org.jgroups.protocols.PING;
 import org.jgroups.protocols.TUNNEL;
 import org.jgroups.protocols.UNICAST3;
@@ -37,7 +38,6 @@ public class TUNNELDeadLockTest {
     private static final int mainTimeout=10000;
     private String           bind_addr="loopback";
     GossipRouter             gossipRouter;
-    private int              gossip_router_port;
     private String           gossip_router_hosts;
 
 
@@ -49,24 +49,19 @@ public class TUNNELDeadLockTest {
         else
             bind_addr="127.0.0.1";
         promise=new Promise<>();
-        gossip_router_port=ResourceManager.getNextTcpPort(InetAddress.getByName(bind_addr));
+        int gossip_router_port = ResourceManager.getNextTcpPort(InetAddress.getByName(bind_addr));
         gossip_router_hosts=bind_addr + "[" + gossip_router_port + "]";
-        gossipRouter=new GossipRouter(bind_addr, gossip_router_port).useNio(false);
+        gossipRouter=new GossipRouter(bind_addr, gossip_router_port, NoOpGossipRouterMetrics.INSTANCE).useNio(false);
         gossipRouter.start();
     }
 
     @AfterMethod void tearDown() throws Exception {
-        //TUNNEL tunnel=channel.getProtocolStack().findProtocol(TUNNEL.class);
-        //System.out.printf("TUNNEL stats:\n%s\n", tunnel.getMessageStats());
         Util.close(channel);
         promise.reset();
         promise=null;
         gossipRouter.stop();
         System.out.println("Router stopped");
     }
-
-
-
 
     /**
      * Pushes messages down the channel as fast as possible. Sometimes this
