@@ -1,15 +1,24 @@
 package org.jgroups.protocols;
 
-import org.jgroups.*;
+import org.jgroups.Address;
+import org.jgroups.Global;
+import org.jgroups.Message;
+import org.jgroups.NullAddress;
+import org.jgroups.View;
 import org.jgroups.annotations.Experimental;
 import org.jgroups.annotations.ManagedAttribute;
 import org.jgroups.annotations.Property;
 import org.jgroups.conf.AttributeType;
 import org.jgroups.logging.Log;
 import org.jgroups.stack.MessageProcessingPolicy;
-import org.jgroups.util.*;
+import org.jgroups.util.AverageMinMax;
+import org.jgroups.util.ByteArrayDataOutputStream;
+import org.jgroups.util.MessageBatch;
+import org.jgroups.util.Util;
 
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -17,8 +26,8 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.LongAdder;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.function.Consumer;
+import java.util.function.Predicate;
 import java.util.stream.Stream;
 
 import static org.jgroups.Message.TransientFlag.DONT_LOOPBACK;
@@ -38,6 +47,9 @@ import static org.jgroups.util.MessageBatch.Mode.REG;
  */
 @Experimental
 public class PerDestinationBundler implements Bundler {
+
+    private static final int MAX_QUEUE_SIZE = 8192;
+    private static final int MAX_DRAIN_QUEUE_SIZE = 1024;
 
     /**
      * Maximum number of bytes for messages to be queued until they are sent.
@@ -77,12 +89,12 @@ public class PerDestinationBundler implements Bundler {
     protected MessageProcessingPolicy       msg_processing_policy;
     protected Log                           log;
     protected Address                       local_addr;
-    protected final Map<Address,SendBuffer> dests=Util.createConcurrentMap();
+    protected final Map<Address, BaseQueue> dests = Util.createConcurrentMap();
     protected static final Address          NULL=new NullAddress();
     protected static final String           THREAD_NAME="pd-bundler";
 
     public int     size() {
-        return dests.values().stream().map(SendBuffer::size).reduce(0, Integer::sum);
+        return dests.values().stream().map(BaseQueue::size).reduce(0, Integer::sum);
     }
     public int     getQueueSize()         {return -1;}
     public int     getMaxSize()           {return max_size;}
@@ -111,20 +123,20 @@ public class PerDestinationBundler implements Bundler {
 
     public void start() {
         local_addr=Objects.requireNonNull(transport.getAddress());
-        dests.values().forEach(SendBuffer::start);
+        dests.values().forEach(BaseQueue::start);
     }
 
     public void stop() {
-        dests.values().forEach(SendBuffer::stop);
+        dests.values().forEach(BaseQueue::stop);
     }
 
     public void send(Message msg) throws Exception {
         if(msg.getSrc() == null)
             msg.setSrc(local_addr);
         Address dest=msg.dest() == null ? NULL : msg.dest();
-        SendBuffer buf=dests.get(dest);
+        var buf = dests.get(dest);
         if(buf == null)
-            buf=dests.computeIfAbsent(dest, k -> new SendBuffer(dest).start());
+            buf = storeQueueIfAbsent(dest);
         buf.send(msg);
     }
 
@@ -132,234 +144,232 @@ public class PerDestinationBundler implements Bundler {
         List<Address> mbrs=view.getMembers();
         if(mbrs == null) return;
 
-        mbrs.stream().filter(dest -> !dests.containsKey(dest))
-          .forEach(dest -> dests.putIfAbsent(dest, new SendBuffer(dest).start()));
+        mbrs.stream()
+                .filter(this::isMemberMissing)
+                .forEach(this::storeQueueIfAbsent);
 
         // remove left members
-        dests.keySet().stream().filter(dest -> !mbrs.contains(dest) && !(dest == NULL))
-          .forEach(dests::remove);
+        dests.keySet().stream()
+                .filter(Predicate.not(Predicate.isEqual(NULL)))
+                .filter(Predicate.not(mbrs::contains))
+                .map(dests::remove)
+                .filter(Objects::nonNull)
+                .forEach(BaseQueue::stop);
     }
 
+    private boolean isMemberMissing(Address address) {
+        if (address == null || address == NULL) {
+            // multicast is never absent
+            return false;
+        }
+        return !dests.containsKey(address);
+    }
 
-    protected class SendBuffer implements Runnable {
-        private final Address                   dest;
-        protected final FastArray<Message>      msgs=new FastArray<>(16);
-        private final Lock                      lock=new ReentrantLock(false);
-        private final BlockingQueue<Message>    queue=new ArrayBlockingQueue<>(8192);
-        private final List<Message>             remove_queue=new ArrayList<>(1024);
-        private final ByteArrayDataOutputStream output=new ByteArrayDataOutputStream(max_size + MSG_OVERHEAD);
-        private volatile Thread                 bundler_thread;
-        private volatile boolean                running=true;
-        private long                            count;
+    protected BaseQueue storeQueueIfAbsent(Address destination) {
+        assert destination != null;
+        return dests.computeIfAbsent(destination, this::createAndStartQueue);
+    }
 
+    protected BaseQueue createAndStartQueue(Address destination) {
+        assert destination != null;
+        return Objects.equals(local_addr, destination) || Objects.equals(destination, transport.getPhysicalAddress()) ?
+                new LoopbackQueue().start() :
+                new RemoteQueue(destination == NULL ? null : destination).start();
+    }
 
-        protected SendBuffer(Address dest) {
-            this.dest=dest;
+    protected void loopback(Address dest, Collection<Message> list) {
+        MessageBatch reg = null, oob = null;
+        for (Message msg : list) {
+            if (msg.isFlagSet(DONT_LOOPBACK))
+                continue;
+            if (msg.isFlagSet(Message.Flag.OOB)) {
+                // we cannot reuse message batches (like in ReliableMulticast.removeAndDeliver()), because batches are
+                // submitted to a thread pool and new calls of this method might change them while they're being passed up
+                if (oob == null)
+                    oob = new MessageBatch(dest, local_addr, transport.getClusterNameAscii(), dest == null, OOB, list.size());
+                oob.add(msg);
+            } else {
+                if (reg == null)
+                    reg = new MessageBatch(dest, local_addr, transport.getClusterNameAscii(), dest == null, REG, list.size());
+                reg.add(msg);
+            }
+        }
+        if (reg != null) {
+            msg_stats.received(reg);
+            msg_processing_policy.loopback(reg, false);
+        }
+        if (oob != null) {
+            msg_stats.received(oob);
+            msg_processing_policy.loopback(oob, true);
+        }
+    }
+
+    protected void sendBundledMessages(Address dst, ByteArrayDataOutputStream output, int msgCount, int resetPosition) {
+        long start = transport.statsEnabled() ? System.nanoTime() : 0;
+        try {
+            transport.doSend(output.buffer(), 0, output.position(), dst);
+            transport.getMessageStats().incrNumBatchesSent();
+            num_batches_sent.increment();
+        } catch (Throwable e) {
+            log.error("%s: failed sending message to %s: %s", local_addr, dst, e);
+        } finally {
+            if (start > 0) {
+                send_times.add(System.nanoTime() - start);
+            }
+            total_msgs_sent.add(msgCount);
+            output.position(resetPosition);
+        }
+    }
+
+    protected abstract class BaseQueue implements Runnable {
+        protected final Address dest;
+        protected final BlockingQueue<Message> queue = new ArrayBlockingQueue<>(MAX_QUEUE_SIZE);
+        protected final List<Message> drain_queue = new ArrayList<>(MAX_DRAIN_QUEUE_SIZE);
+        private volatile Thread bundler_thread;
+        protected volatile boolean running;
+
+        protected BaseQueue(Address dest) {
+            this.dest = dest;
         }
 
-        public SendBuffer start() {
-            if(running)
+        protected void send(Message msg) throws InterruptedException {
+            if (!running) {
+                return;
+            }
+            if (drop_when_full || msg.isFlagSet(Message.TransientFlag.DONT_BLOCK)) {
+                if (!queue.offer(msg)) {
+                    num_drops_on_full_queue.increment();
+                }
+                return;
+            }
+            queue.put(msg);
+        }
+
+        int size() {
+            return queue.size();
+        }
+
+        protected BaseQueue start() {
+            if (running)
                 stop();
-            bundler_thread=transport.getThreadFactory().newThread(this, THREAD_NAME);
-            running=true;
+            bundler_thread = transport.getThreadFactory().newThread(this, THREAD_NAME);
+            running = true;
             bundler_thread.start();
             return this;
         }
 
-        public void stop() {
-            running=false;
-            Thread tmp=bundler_thread;
-            if(tmp != null)
+        protected void stop() {
+            Thread tmp = bundler_thread;
+            running = false;
+            if (tmp != null)
                 tmp.interrupt();
         }
-
-        public void run() {
-            while(running) {
-                Message msg=null;
-                try {
-                    if((msg=queue.take()) == null)
-                        continue;
-                    addAndSendIfSizeExceeded(msg);
-                    while(true) {
-                        remove_queue.clear();
-                        int num_msgs=queue.drainTo(remove_queue);
-                        if(num_msgs <= 0)
-                            break;
-                        for(int i=0; i < remove_queue.size(); i++) {
-                            msg=remove_queue.get(i);
-                            addAndSendIfSizeExceeded(msg);
-                        }
-                    }
-                    if(count > 0) {
-                        sendBundledMessages();
-                        num_send_due_to_no_msgs.increment();
-                    }
-                }
-                catch(Throwable t) {
-                }
-            }
-        }
-
-        protected void addAndSendIfSizeExceeded(Message msg) {
-            int size=msg.size(); // getLength() might return 0 when no [ayload is present: don't use!
-            if(count + size >= max_size) {
-                sendBundledMessages();
-                num_sends_due_to_max_size.increment();
-            }
-            addMessage(msg, size);
-        }
-
-        protected void addMessage(Message msg, int size) {
-            msgs.add(msg);
-            count+=size;
-        }
-
-        protected void send(Message msg) throws Exception {
-            if(!running)
-                return;
-            if(drop_when_full || msg.isFlagSet(Message.TransientFlag.DONT_BLOCK)) {
-                if(!queue.offer(msg))
-                    num_drops_on_full_queue.increment();
-            }
-            else
-                queue.put(msg);
-        }
-
-        protected void sendBundledMessages() {
-            if(msgs.isEmpty()) // should never happen!
-                return;
-            Address dst=dest == NULL? null : dest;
-            sendMessages(dst, local_addr, msgs);
-            msgs.clear(false);
-            count=0;
-        }
-
-        protected void sendMessages(final Address dest, final Address src, final FastArray<Message> list) {
-            long start=transport.statsEnabled()? System.nanoTime() : 0;
-            try {
-                int size=list.size();
-                if(size == 0)
-                    return;
-                if(size == 1)
-                    sendSingle(dest, list.get(0), this.output);
-                else
-                    sendMultiple(dest, src, list, this.output);
-                if(start > 0)
-                    send_times.add(System.nanoTime()-start);
-                total_msgs_sent.add(size);
-            }
-            catch(Throwable e) {
-                log.trace(Util.getMessage("FailureSendingMsgBundle"), transport.getAddress(), e);
-            }
-        }
-
-        protected void sendSingle(Address dst, Message msg, ByteArrayDataOutputStream out) {
-            if(dst == null) { // multicast
-                sendSingleMessage(msg.dest(), msg, out);
-                loopbackUnlessDontLoopbackIsSet(msg);
-            }
-            else {            // unicast
-                boolean send_to_self=Objects.equals(transport.getAddress(), dst)
-                  || dst instanceof PhysicalAddress && dst.equals(transport.localPhysicalAddress());
-                if(send_to_self)
-                    loopbackUnlessDontLoopbackIsSet(msg);
-                else
-                    sendSingleMessage(msg.dest(), msg, out);
-            }
-        }
-
-        protected void sendMultiple(Address dst, Address sender, FastArray<Message> list, ByteArrayDataOutputStream out) {
-            if(dst == null) { // multicast
-                sendMessageList(dst, sender, list, out);
-                loopback(dst, transport.getAddress(), list);
-            }
-            else {            // unicast
-                boolean loopback=Objects.equals(transport.getAddress(), dst)
-                  || dst instanceof PhysicalAddress && dst.equals(transport.localPhysicalAddress());
-                if(loopback)
-                    loopback(dst, transport.getAddress(), list);
-                else
-                    sendMessageList(dst, sender, list, out);
-            }
-        }
-
-        protected void sendSingleMessage(final Address dest, final Message msg, ByteArrayDataOutputStream out) {
-            try {
-                out.position(0);
-                Util.writeMessage(msg, out, dest == null);
-                transport.doSend(out.buffer(), 0, out.position(), dest);
-                transport.getMessageStats().incrNumSingleMsgsSent();
-                num_single_msgs_sent.increment();
-            }
-            catch(Throwable e) {
-                log.error("%s: failed sending message to %s: %s", local_addr, dest, e);
-            }
-        }
-
-        protected void sendMessageList(Address dest, Address src, FastArray<Message> list, ByteArrayDataOutputStream out) {
-            out.position(0);
-            try {
-                Util.writeMessageList(dest, src, transport.cluster_name.chars(), list,
-                                      out, dest == null);
-                transport.doSend(out.buffer(), 0, out.position(), dest);
-                transport.getMessageStats().incrNumBatchesSent();
-                num_batches_sent.increment();
-            }
-            catch(Throwable e) {
-                log.trace(Util.getMessage("FailureSendingMsgBundle"), transport.getAddress(), e);
-            }
-        }
-
-        protected void loopback(Address dest, Address sender, FastArray<Message> list) {
-            MessageBatch reg=null, oob=null;
-            for(Message msg: list) {
-                if(msg.isFlagSet(DONT_LOOPBACK))
-                    continue;
-                if(msg.isFlagSet(Message.Flag.OOB)) {
-                    // we cannot reuse message batches (like in ReliableMulticast.removeAndDeliver()), because batches are
-                    // submitted to a thread pool and new calls of this method might change them while they're being passed up
-                    if(oob == null)
-                        oob=new MessageBatch(dest, sender, transport.getClusterNameAscii(), dest == null, OOB, list.size());
-                    oob.add(msg);
-                }
-                else {
-                    if(reg == null)
-                        reg=new MessageBatch(dest, sender, transport.getClusterNameAscii(), dest == null, REG, list.size());
-                    reg.add(msg);
-                }
-            }
-            if(reg != null) {
-                msg_stats.received(reg);
-                msg_processing_policy.loopback(reg, false);
-            }
-            if(oob != null) {
-                msg_stats.received(oob);
-                msg_processing_policy.loopback(oob, true);
-            }
-        }
-
-        protected void loopbackUnlessDontLoopbackIsSet(Message msg) {
-            if(msg.isFlagSet(DONT_LOOPBACK))
-                return;
-            msg_stats.received(msg);
-            msg_processing_policy.loopback(msg, msg.isFlagSet(Message.Flag.OOB));
-        }
-
-        public String toString() {
-            return String.format("%d msgs", size());
-        }
-
-        protected int size() {
-            lock.lock();
-            try {
-                return msgs.size();
-            }
-            finally {
-                lock.unlock();
-            }
-        }
-
     }
 
+    private static void prepareOutput(int msgCount, ByteArrayDataOutputStream output, int resetPosition) {
+        // move the position back to write the message counter.
+        var pos = output.position();
+        assert pos > resetPosition;
+        output.position(resetPosition - Global.INT_SIZE);
+        output.writeInt(msgCount);
+        output.position(pos);
+    }
 
+    protected class RemoteQueue extends BaseQueue implements Consumer<Message> {
+
+        protected final ByteArrayDataOutputStream output;
+        protected final int resetIndex;
+        protected final boolean multicast;
+        private int count = 0;
+
+        protected RemoteQueue(Address dest) {
+            super(dest);
+            output = new ByteArrayDataOutputStream(max_size + MSG_OVERHEAD);
+            multicast = dest == null;
+            // The header never changes as the source and destination are always the same.
+            // We can cache it and reset the ByteArrayDataOutputStream position to "resetIndex" on each iteration.
+            try {
+                Util.writeMessageListHeader(dest, local_addr, transport.cluster_name.chars(), 0, output, multicast);
+            } catch (IOException e) {
+                // should never happen!
+                throw new IllegalStateException(e);
+            }
+            resetIndex = output.position();
+        }
+
+        @Override
+        public void run() {
+            while (running) {
+                drain_queue.clear();
+                try {
+                    drain_queue.add(queue.take());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    continue;
+                }
+                queue.drainTo(drain_queue);
+                drain_queue.forEach(this);
+
+                // flush what is left
+                if (count > 0) {
+                    flush();
+                }
+
+                if (multicast) {
+                    // Loopback the messages before we clear the queue.
+                    // We don't care about max_size, send everything up!
+                    loopback(dest, drain_queue);
+                }
+            }
+        }
+
+        @Override
+        public void accept(Message msg) {
+            var pos = output.position();
+            if (pos + msg.size() > max_size) {
+                // max size reached
+                flush();
+                pos = output.position();
+            }
+
+            try {
+                output.writeShort(msg.getType());
+                msg.writeToNoAddrs(local_addr, output);
+                ++count;
+            } catch (IOException e) {
+                // remove this message from the buffer
+                output.position(pos);
+            }
+        }
+
+        private void flush() {
+            prepareOutput(count, output, resetIndex);
+            sendBundledMessages(dest, output, count, resetIndex);
+            count = 0;
+            num_sends_due_to_max_size.increment();
+        }
+    }
+
+    protected class LoopbackQueue extends BaseQueue {
+
+        protected LoopbackQueue() {
+            super(local_addr);
+        }
+
+        @Override
+        public void run() {
+            while (running) {
+                drain_queue.clear();
+                try {
+                    drain_queue.add(queue.take());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    continue;
+                }
+                queue.drainTo(drain_queue);
+                // We don't care about max_size, send everything up!
+                loopback(local_addr, drain_queue);
+            }
+        }
+    }
 }
